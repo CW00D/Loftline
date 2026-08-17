@@ -1,0 +1,115 @@
+# Loftline repository gitignore
+#
+# NOTE: this file governs the Loftline repository itself, not generated
+# projects. Generated projects receive their own gitignore from
+# template/.gitignore.jinja.
+#
+# Two rules must survive any future edit of this file:
+#   1. Nothing under template/ may be ignored by pattern. The template is the
+#      product. A pattern that silently swallows a template file produces
+#      generated projects missing that file, and the failure appears only at
+#      deploy time in a downstream repository.
+#   2. .copier-answers.yml must never be ignored anywhere. copier update has no
+#      state to reconcile against without it.
+
+# --- Secrets and credentials -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.mobileprovision
+*.keystore
+*.jks
+credentials.json
+service-account*.json
+gha-creds-*.json
+
+# --- Terraform ---------------------------------------------------------------
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# tfvars may contain credentials. Example files are tracked deliberately.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!terraform.tfvars.example
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# --- Node --------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.npm/
+.eslintcache
+
+# --- Copier ------------------------------------------------------------------
+# Scratch output from local generation runs. Generate into a directory named
+# _scratch/ so test output never risks being committed.
+_scratch/
+.copier-cache/
+
+# --- Editors and OS ----------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# --- Local tooling -----------------------------------------------------------
+.direnv/
+.envrc
+*.local
