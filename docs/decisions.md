@@ -179,3 +179,81 @@ handled by a local shell alias, never by divergence between the three.
 - The repository is private, under a personal account, with the first commit
   dated before any employment that could create ownership ambiguity. The commit
   timestamp is the provenance evidence.
+
+---
+
+## ADR-008: The audit is dropped; the cost is custody, not enrolment
+
+**Status:** Accepted. Supersedes the planned setup audit.
+
+**Context.** A two-hour audit was planned to establish whether setup cost was
+automatable or account-plane, on the basis that account-plane cost is one-off
+and already paid for. The audit's question was answered directly instead: the
+recurring cost is finding and re-wiring credentials that already exist, plus
+manual repository and permission setup, plus account boilerplate. Enrolment is
+not the recurring cost.
+
+**Decision.** Do not conduct the audit. Split the account plane into
+*enrolment* (manual, one-off, out of scope) and *custody* (recurring,
+automatable, the core of the product). Build the credential resolver.
+
+**Consequences.**
+
+- The credential resolver becomes the primary mechanism, and templating becomes
+  secondary. This inverts the original build order.
+- The credential inventory is not written as a document. It accumulates as
+  descriptors in `credentials.yml`, populated the first time each credential is
+  requested, and is therefore complete by construction rather than by
+  recollection.
+- The value of the tool no longer depends on generating many projects. It
+  delivers on the first project, because the first project is where the
+  descriptors and the vault get populated.
+
+---
+
+## ADR-009: Four credential states, and a pure resolver
+
+**Status:** Accepted
+
+**Context.** A credential a project needs may already be held, may be
+derivable from something held, may require manual acquisition, or may not be
+able to exist until provisioning creates it.
+
+**Decision.** Four states: `held`, `derivable`, `manual`, `produced`. The
+resolver is a pure function of the spec, the descriptor file and an index of
+vault paths. It performs no network calls and never reads a secret value.
+
+**Consequences.**
+
+- The resolver is fully testable with no vendor account, no credentials and no
+  network. It is therefore the first component written and the one with real
+  test coverage.
+- Acquisition instructions live in the descriptor rather than in a person's
+  memory, so a credential is researched once per lifetime rather than once per
+  project.
+- `produced` credentials are written to environment secrets and never to the
+  vault, preserving the distinction between what belongs to the account and
+  what belongs to a project.
+- Expiry handling falls out for free: an elapsed credential moves from `inject`
+  to `request` with no special case.
+
+---
+
+## ADR-010: Vault backend is pluggable, chosen once
+
+**Status:** Accepted
+
+**Context.** The vault holds account-level secret values. Candidates are a
+hosted manager with a UI and sharing, or a local store with no vendor.
+
+**Decision.** The CLI shells out to a vault adapter exposing three operations:
+`list_paths`, `get(path)`, `set(path, value)`. Any backend implementing those
+is acceptable. Choose one now and do not revisit.
+
+**Consequences.**
+
+- The resolver depends only on `list_paths`, so backend choice cannot affect
+  the component with the most logic in it.
+- A hosted manager is required if the tool is ever shared with anyone else; a
+  local store is sufficient while it is single-user. The adapter boundary
+  defers that decision without cost.

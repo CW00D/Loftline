@@ -1,130 +1,140 @@
 # Roadmap
 
 Sequenced by gate rather than by date. Each step has an exit condition that
-must hold before the next step begins. The gates exist because the failure mode
-of this project is building the later steps against assumptions the earlier
-steps would have falsified.
+must hold before the next begins.
 
-## Step 0: Audit
+The order inverts the original plan. The credential resolver comes before the
+template, because custody is the dominant cost (ADR-008) and because the
+resolver is the only component testable with no vendor account, no credentials
+and no network.
 
-**Effort:** 2 hours.
-**Deliverable:** `docs/audit.md` completed, with a stated conclusion.
-**Gate:** automatable hours exceed account-plane hours.
+## Step 1: Vault and descriptor schema
 
-The only step that can terminate the project. See `docs/audit.md` for the
-decision rule.
+**Effort:** half a day.
+**Deliverable:** a chosen vault backend, an adapter exposing `list_paths`,
+`get` and `set`, and `credentials.yml` containing two or three real
+descriptors.
 
-## Step 1: Extraction
+Do not enumerate every credential. Add three you know by heart and stop; the
+rest accumulate as the resolver requests them.
+
+**Gate:** `loftline vault list` prints paths, and no secret value appears in
+any tracked file.
+
+## Step 2: Resolver
+
+**Effort:** 1 day.
+**Deliverable:** `cli/loftline/resolve.py` plus a full test suite.
+
+Pure function of spec, descriptors and vault path index. Partitions into
+`inject`, `derive`, `request`, `defer`. Handles expiry. Touches no network.
+
+**Gate:** tests cover every state including expired-credential promotion and
+unknown-credential failure, and pass with no credentials configured.
+
+This is the component with the most logic and the only one that can be
+verified properly. Write it carefully; everything downstream consumes its
+output.
+
+## Step 3: Extraction
 
 **Effort:** one weekend.
-**Deliverable:** a stripped skeleton in `template/`, with no templating.
+**Deliverable:** a stripped skeleton in `template/`, with no templating at all.
 
 Clone the most recent working project into `template/` and delete everything
 domain-specific. What remains: backend, database layer, one migration, auth
-stubs, healthcheck, one CI workflow, a hosting blueprint, and a
-`docker-compose.yml`. No Jinja, no variables, no conditionals.
+stubs, healthcheck, one CI workflow, hosting blueprint, `docker-compose.yml`.
+No Jinja, no variables, no conditionals.
 
-**Gate:** the stripped skeleton deploys from a clean clone.
+**Gate:** the skeleton deploys from a clean clone. Deployment, not
+compilation. A skeleton that builds but has never been deployed encodes
+exactly the assumptions that break later in generated projects.
 
-Deployment, not compilation. A skeleton that builds but has never been deployed
-encodes precisely the assumptions that break later in generated projects. If
-this cannot be achieved in a weekend, templating is not the problem and
-everything downstream is premature.
-
-## Step 2: Parameterisation
+## Step 4: Parameterisation
 
 **Effort:** 2 to 3 days.
 **Deliverable:** `copier.yml` and a rendering template.
 
-Minimum viable question set: `project_name`, `package_name`, `database`,
-`mobile`, `notifications`. Jinja-ise filenames and contents. Nothing beyond
-this set until a real project demands it.
+Question set: `project_name`, `package_name`, `database`, `mobile`,
+`notifications`. Nothing beyond this until a real project demands it.
 
-**Gate:** two distinct projects generated and both deployed.
+**Gate:** two distinct projects generated and both deployed. The second
+generation is the entire test; a template validated by one generation is
+validated by nothing.
 
-The second generation is the entire test. Templates fail on the paths nobody
-exercised, so a template validated by one generation is validated by nothing.
+## Step 5: Secret writer
 
-Steps 0 to 2 total 20 to 25 hours and capture most of the available value.
-Everything after this point has diminishing returns.
+**Effort:** 1 day.
+**Deliverable:** resolver output written to GitHub environment secrets via the
+GitHub CLI, and to the hosting provider's environment group.
 
-## Step 3: Local demo mode
+**Gate:** a generated project's CI run consumes an injected credential
+successfully, with no value having passed through a log or a tracked file.
+
+Steps 1 to 5 constitute the working product. Everything after is expansion.
+
+## Step 6: Local demo mode
 
 **Effort:** 2 to 3 days.
 **Deliverable:** `docker compose up` yielding a complete running system with
 zero external dependencies, plus a seed loader and a synthetic data generator.
 
-Sequenced ahead of cloud provisioning deliberately. This is the variant with
-the highest work value, it is unblocked by vendor accounts, and it is the one
-usable in settings where third-party hosting is not acceptable. See ADR-006.
+Highest work value of any remaining step, unblocked by vendor accounts, and
+the only variant usable where third-party hosting is unacceptable. See
+ADR-006.
 
-**Gate:** a stranger can clone, run one command, and reach a working system
-with realistic data at a scale that survives follow-up questions.
+**Gate:** clone, one command, working system with data at a scale that
+survives follow-up questions.
 
-## Step 4: GitHub provisioning
+## Step 7: GitHub provisioning
 
 **Effort:** 1 to 2 days.
 **Deliverable:** a Terraform module in `infra/`.
 
-Narrow scope: repository creation, branch protection, environments,
-environment-scoped Actions secrets, collaborators. State in object storage with
-locking. The generator writes `terraform.tfvars` from the Copier answers;
-`terraform apply` is run by hand rather than wrapped. Wrapping is a later
+Repository creation, branch protection, environments, collaborators. State in
+private encrypted object storage with locking. The CLI writes `terraform.tfvars`
+from the answers; `terraform apply` is run by hand. Wrapping it is a later
 convenience and a present source of opaque failures.
 
-**Gate:** a generated project's repository and environments exist entirely from
-`terraform apply`, with no console interaction.
+**Gate:** repository and environments exist entirely from `terraform apply`.
 
-## Step 5: Hosting provisioning
+## Step 8: Hosting provisioning
 
 **Effort:** 3 to 5 days. Highest uncertainty in the plan.
 
-Try the cheap route first: commit the hosting blueprint file, connect the
-repository once by hand, and let the provider manage services, environment
-groups and preview environments. That is an hour of work and may remove the
-need for infrastructure-as-code on the hosting side entirely. Reach for a
-Terraform provider only if the blueprint route is demonstrably insufficient.
+Cheap route first: commit the hosting blueprint, connect the repository once by
+hand, let the provider manage services, environment groups and preview
+environments. An hour of work, and it may remove the need for
+infrastructure-as-code on the hosting side entirely. Reach for a provider only
+if the blueprint route is demonstrably insufficient. Managed database creation
+goes in a small wrapper over the vendor API, not through Terraform.
 
-Managed database provisioning goes in a small wrapper over the vendor API,
-invoked by the CLI, not forced through Terraform.
+**Gate:** a generated project reaches a live URL with no console interaction
+beyond the one-time repository connection.
 
-**Gate:** a generated project reaches a live URL without console interaction
-beyond the initial one-time repository connection.
-
-## Step 6: Mobile pipeline
+## Step 9: Mobile pipeline
 
 **Effort:** ~1 week. Worst return in the plan.
 
-Build profiles, credentials, store submission. Deferred until there is a mobile
-application that actually needs shipping. This component has the highest rot
-rate in the system, because the platform vendors change underneath it on their
-schedule rather than yours.
+Deferred until a mobile application actually needs shipping. Highest rot rate
+in the system, because the platform vendors change underneath it on their
+schedule.
 
-## Step 7: Update propagation
+## Step 10: Update propagation
 
-**Effort:** 1 to 2 days. Not exercisable in isolation.
-
-Requires two or more real downstream repositories. Test by making a deliberate
-template change and propagating it into both, then confirming neither is
-broken by the merge.
+**Effort:** 1 to 2 days. Not exercisable in isolation; needs two downstream
+repositories. Make a deliberate template change, propagate into both, confirm
+neither breaks.
 
 ## Totals
 
 | Scope | Hours | Calendar, part-time |
 | --- | --- | --- |
-| Steps 0 to 2 | 20 to 25 | one weekend plus two evenings |
-| Steps 0 to 3 | 35 to 45 | two to three weekends |
-| Steps 0 to 5 | 55 to 70 | three to four weekends |
-| Everything | 100 to 140 | several months |
+| Steps 1 to 2 | 10 to 12 | two evenings |
+| Steps 1 to 5 | 45 to 55 | three weekends |
+| Steps 1 to 8 | 80 to 100 | five to six weekends |
+| Everything | 120 to 160 | several months |
 
-Beyond step 5 the system carries permanent maintenance load proportional to the
-number of vendors in its dependency graph. That load does not appear in the
-table and is the real cost of the later steps.
-
-## Sequencing constraint
-
-Steps 0 to 2 are self-contained and can be done in a single weekend without
-displacing other commitments. Steps 3 onward cannot, and starting them while
-another deadline is live is the failure mode this project is most susceptible
-to: unbounded scope, self-defined success criteria, no external deadline, and
-immediate sensations of progress.
+Beyond step 8 the system carries permanent maintenance load proportional to the
+number of vendors in its dependency graph. That load is not in the table and is
+the real cost of the later steps.
