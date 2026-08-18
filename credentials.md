@@ -143,3 +143,91 @@ construction rather than complete by recollection.
    vault, because they belong to a project rather than to the account.
 5. Terraform state is treated as sensitive regardless of what is in it, and the
    backend is private and encrypted.
+
+---
+
+## Vault backend
+
+SOPS with age. See ADR-011 for the reasoning and the accepted risks.
+
+### File layout
+
+The encrypted vault lives in a **separate private repository**, never in this
+one. The adapter reads it by path, supplied as `LOFTLINE_VAULT` or a config
+value.
+
+```yaml
+loftline:
+  render:
+    api_key:
+      value: ENC[AES256_GCM,data:...]
+      acquired_at: 2026-08-18T10:04:00Z
+  expo:
+    push_token:
+      value: ENC[AES256_GCM,data:...]
+      acquired_at: 2026-08-18T10:06:00Z
+```
+
+`.sops.yaml` in that repository:
+
+```yaml
+creation_rules:
+  - path_regex: vault\.ya?ml$
+    encrypted_regex: '^value$'
+    age: age1yourpublickey...,age1yourbackupkey...
+```
+
+Two recipients, always. The second is a backup identity stored elsewhere;
+losing the sole key destroys the vault with no recovery path.
+
+### Why `encrypted_regex: '^value$'` matters
+
+SOPS encrypts leaf values and leaves keys and structure in plaintext. With only
+`value` fields encrypted:
+
+- `list_paths` parses the encrypted file directly. No decryption, no key
+  required, no secret in memory.
+- `acquired_at` is readable in plaintext, so expiry is evaluated without
+  decryption.
+- Only `get` decrypts, and only one extracted value at a time.
+
+The resolver is therefore pure by construction rather than by discipline: it
+consumes `list_paths` and timestamps, both of which are available from
+ciphertext.
+
+### Adapter operations
+
+```
+list_paths() -> list[str]
+    Parse the encrypted YAML. Walk to every node containing a `value` key.
+    Return slash-joined paths, e.g. "loftline/render/api_key".
+    Never shells out to sops. Never decrypts.
+
+get(path) -> str
+    sops -d --extract '["loftline"]["render"]["api_key"]["value"]' vault.yml
+    Single value to stdout. Never decrypt the whole document.
+
+set(path, value) -> None
+    sops set '["loftline"]["render"]["api_key"]' '{"value":"...","acquired_at":"..."}' vault.yml
+    In-place. Plaintext must never touch disk, so no decrypt-edit-encrypt
+    round trip through a temporary file.
+
+acquired_at(path) -> datetime | None
+    Read from the parsed ciphertext. No decryption.
+```
+
+Slash paths in descriptors map to SOPS extract expressions by splitting on `/`.
+
+### Operational preconditions
+
+Enforced by `loftline doctor`, which refuses to run other commands if any fail:
+
+- `sops` and `age` present on PATH
+- age key file exists and is mode 600
+- vault file resolves and parses
+- `.sops.yaml` lists at least two recipients
+- full-disk encryption enabled
+
+Full-disk encryption is a prerequisite rather than a recommendation. Without
+it the age key is readable straight off the drive by anyone holding the
+machine, and every other control is decorative.

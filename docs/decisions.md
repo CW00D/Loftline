@@ -257,3 +257,47 @@ is acceptable. Choose one now and do not revisit.
 - A hosted manager is required if the tool is ever shared with anyone else; a
   local store is sufficient while it is single-user. The adapter boundary
   defers that decision without cost.
+
+---
+
+## ADR-011: Vault backend is SOPS with age, in a separate private repository
+
+**Status:** Accepted. Resolves the choice deferred by ADR-010.
+
+**Context.** The vault holds account-level credential values. It is read on a
+developer machine at generation time by a human. CI never reads it, because
+resolved values are pushed into GitHub environment secrets and the hosting
+provider's environment groups, and everything downstream reads from there.
+That removes service accounts, machine identities, seat counts and CI
+integration from the requirement set entirely. What is required is a local
+store with a scriptable read.
+
+**Decision.** SOPS with age. No vendor, no account, no subscription, no network
+dependency. The encrypted file lives in a **separate private repository**, not
+in this one.
+
+**Consequences.**
+
+- SOPS encrypts leaf values and leaves keys and document structure in
+  plaintext. `list_paths` therefore reads the *encrypted* file and needs no
+  decryption at all, which keeps the resolver pure by construction rather than
+  by discipline.
+- A SOPS creation rule of `encrypted_regex: '^value$'` leaves `acquired_at`
+  timestamps in plaintext, so expiry is evaluated without decrypting anything.
+  Only `get` ever decrypts, and only a single extracted value at a time.
+- The vault is **not** committed to the Loftline repository. Loftline is
+  intended to be shared. A public repository containing an encrypted vault
+  publishes the credential inventory and hands anyone a permanent offline
+  attack target against the age key.
+- The age private key sits at `~/.config/sops/age/keys.txt` in plaintext,
+  protected only by filesystem permissions. This is the real gap against a
+  hosted manager and it is accepted on four conditions: full-disk encryption
+  enabled, `chmod 600` on the key file, the key backed up out of band because
+  loss destroys the vault irrecoverably, and encryption to two recipients so a
+  backup identity exists.
+- Blast radius is bounded: almost everything stored is vendor-revocable in
+  seconds from a console. This is not a signing key store.
+- If this ever becomes multi-user, migrate to a hosted manager. The adapter
+  boundary from ADR-010 makes that roughly thirty lines.
+- `age-plugin-yubikey` is the available upgrade path, binding the identity to
+  hardware so the key never exists on disk.
