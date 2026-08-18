@@ -1,0 +1,45 @@
+# Feature to requirements mapping.
+#
+# Data, not code. The resolver unions the requirements of every feature the
+# spec enables, and defers everything they produce to provisioning time.
+#
+# enabled_when takes one of three forms:
+#   {always: true}                          always enabled
+#   {field: <spec field>, is_true: true}    enabled by a boolean spec flag
+#   {field: <spec field>, equals: <value>}  enabled by a spec choice
+#
+# requires: credentials that must exist before generation.
+# produces: credentials that cannot exist until provisioning creates them.
+#
+# Every name on either list needs a descriptor in credentials.yml. The resolver
+# fails loudly if one is missing, which is how the inventory accumulates.
+
+version: 1
+
+features:
+
+  # Hosting is not a spec question. There is one hosting provider, so the
+  # feature is unconditional. It becomes a choice the day there is a second,
+  # and that is a spec schema change made deliberately.
+  hosting.render:
+    enabled_when: {always: true}
+    requires: [render_api_key]
+    produces: [render_service_id]
+
+  # The database slot is the single genuinely exclusive parameter (ADR-004).
+  database.postgres:
+    enabled_when: {field: database, equals: postgres}
+    produces: [database_url]
+
+  database.aura:
+    enabled_when: {field: database, equals: aura}
+    requires: [aura_client_id, aura_client_secret]
+    produces: [neo4j_uri, neo4j_password]
+
+  mobile:
+    enabled_when: {field: mobile, is_true: true}
+    requires: [apple_team_id, app_store_connect_key, apple_app_specific_password]
+
+  notifications:
+    enabled_when: {field: notifications, is_true: true}
+    requires: [expo_push_token, expo_account_id]

@@ -1,0 +1,7 @@
+# A worked project spec. The only artefact an LLM ever authors (ADR-001).
+project_name: beerreel
+package_name: beerreel
+database: postgres
+mobile: false
+notifications: false
+environments: [staging, production]

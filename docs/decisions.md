@@ -241,7 +241,8 @@ vault paths. It performs no network calls and never reads a secret value.
 
 ## ADR-010: Vault backend is pluggable, chosen once
 
-**Status:** Accepted
+**Status:** Accepted. Amended by ADR-011, which selects the backend, and by
+ADR-012, which adds `acquired_at` to the adapter surface.
 
 **Context.** The vault holds account-level secret values. Candidates are a
 hosted manager with a UI and sharing, or a local store with no vendor.
@@ -301,3 +302,143 @@ in this one.
   boundary from ADR-010 makes that roughly thirty lines.
 - `age-plugin-yubikey` is the available upgrade path, binding the identity to
   hardware so the key never exists on disk.
+
+---
+
+## ADR-012: Resolver decisions the descriptor schema left open
+
+**Status:** Accepted
+
+**Context.** Implementing the resolver surfaced five questions that
+`credentials.md` does not answer. Each was resolved in code, and each would
+otherwise be re-decided differently by whoever next touches it.
+
+**Decision.**
+
+1. **`derivable` descriptors carry a `derivation` field**, required by the
+   schema. The resolver contract emits `(name, derivation)` but the required
+   fields table names no source for it.
+2. **A credential a feature `produces` needs a descriptor too**, not just the
+   ones it `requires`. The `defer` tuple carries `produced_by`, `github_secret`
+   and `environments`, all of which come from a descriptor, so a missing one is
+   the same fatal error as a missing requirement.
+3. **A `held` credential absent from the vault becomes a `request`.** The
+   states table treats `manual` as the state that prompts, but a credential
+   recorded as held that is not in fact held has to be acquired, and the vault
+   is the authority on that rather than the descriptor. The converse also
+   holds: a `manual` credential present in the vault is injected, which is what
+   makes the second-run request list empty.
+4. **An expiring credential with no `acquired_at` is requested, not injected.**
+   Freshness that cannot be proved is not assumed. The alternative is injecting
+   a credential that elapsed at an unknown point and discovering it during a
+   deployment.
+5. **`loftline doctor` gates per capability, not per command.** Three levels:
+   `read-index` needs only the vault file, `decrypt` adds `sops`, `age`, the
+   key file and full-disk encryption, `write` adds a second recipient. This is
+   what lets `plan` be a hard-gated command and still run on a machine with no
+   age key, which is the point of encrypting only `value` fields.
+
+**Consequences.**
+
+- A check that cannot reach a verdict reports UNKNOWN, which is printed loudly
+  and does not block. Full-disk encryption on Windows usually cannot be queried
+  without elevation, and treating that as a failure would train the operator to
+  bypass the gate, which is worse than reporting it honestly.
+- The `expires`, `acquired_at` and vault-presence rules mean the descriptor
+  states are a declaration of *kind*, and the vault index decides *action*.
+  Keeping that split explicit is what stops the resolver growing special cases.
+- Hosting has no spec question, so `hosting.render` is an unconditional feature
+  in the mapping. A second hosting provider is a spec schema change made
+  deliberately, not a flag that accumulates.
+- `docs/credentials.md` is now behind the implementation in three places and
+  must be reconciled: the required-fields list omits `derivation`, the
+  descriptor states table implies the state alone decides the action, and the
+  operational preconditions section describes `doctor` as a single hard gate on
+  every command rather than three capability levels.
+
+---
+
+## ADR-013: MCP server is the second interface; the exposed tool set is bounded
+
+**Status:** Accepted in principle, not yet implemented. Build after Step 5.
+
+**Context.** An MCP server would let an agent asked to start a project resolve
+requirements and generate the base itself, which is the natural extension of
+ADR-001: the model authors the spec, deterministic tooling consumes it. The
+question is not whether to build it but which tools it exposes.
+
+**Decision.** Build it after Step 5, as a thin wrapper over an already working
+CLI. Exposed to a model: `list_features`, `validate_spec`, `plan(spec)`, and
+`generate(spec)` writing to a scratch directory. Not exposed: `provision`,
+`write_secrets`, `acquire`.
+
+**Consequences.**
+
+- The withheld tools create repositories, write environment secrets and touch
+  vendor accounts. Exposing them recreates precisely the failure mode ADR-001
+  exists to prevent, and an MCP call is indistinguishable to a model from any
+  other function call, so the protocol offers no meaningful confirmation step.
+- The resolver's purity (ADR-009) becomes a security property rather than only
+  a testability one. Because `plan` consumes a path index and timestamps and
+  never a value, it cannot leak a credential into a transcript even if
+  instructed to.
+- Acquisition never happens through a chat interface. A secret pasted into a
+  chat window is a secret in a retained, synced transcript. The model prints
+  the `acquire` instructions and stops; the value is supplied via `loftline
+  acquire` in a terminal. The wrong path must be unavailable rather than
+  discouraged.
+- `plan` runs at the `read-index` capability level from ADR-012, so an MCP
+  session needs no age key present. The security boundary and the capability
+  gating agree, which is the reason both were designed that way.
+- Building this before Step 5 means designing a tool surface for an engine
+  whose shape is still being discovered, and doing the interface work twice.
+
+---
+
+## ADR-014: If a hosted vault is ever built, the server holds ciphertext only
+
+**Status:** Accepted in principle. Out of scope until the CLI has a user who is
+not the author.
+
+**Context.** A hosted product with accounts would give sync across devices,
+team sharing, recovery from a lost laptop, and onboarding for someone with no
+existing vault. These are real and a purely client-side design cannot provide
+them. The tempting implementation is server-side custody of values, by analogy
+with GitHub environment secrets.
+
+**Decision.** Accounts are acceptable. Server-side custody of plaintext, or of
+decryption keys, is not. The server holds ciphertext; the client holds a key
+derived from a passphrase that never leaves the device.
+
+**Consequences.**
+
+- The GitHub analogy does not transfer. GitHub holds secrets as a side effect
+  of a product users already trust with source code, backed by HSMs and a large
+  security organisation. Loftline would be asking for production credentials as
+  the first thing it does, before it has done anything for the user.
+- A store of hosting, DNS, database and app store credentials across many small
+  companies is a higher-value target than most of the accounts it protects.
+  Tooling vendors are attacked for exactly this reason.
+- Holding plaintext or keys would require envelope encryption with a managed
+  KMS, per-user data keys, rotation, immutable per-read audit logs, a
+  pre-planned breach disclosure process, a UK GDPR processor agreement with
+  every customer carrying a 72-hour notification duty, and professional
+  indemnity plus cyber insurance. It also creates an obligation that outlives
+  enthusiasm for the project: a vault users depend on cannot be abandoned.
+- Holding ciphertext removes nearly all of that. A breach yields useless blobs.
+- The inverted split, server holds the key and client holds the ciphertext, is
+  rejected explicitly. The key must reach the client at generation time
+  regardless, so the property is not preserved; it centralises the one item
+  that unlocks everything; it still requires the full account system; and it
+  delivers no sync, since the vault remains on a single machine.
+- Cost of the correct design: no server-side processing of secret values. No
+  validating a key against a vendor, no inspecting a token for expiry. The
+  resolver already operates on path indexes and timestamps rather than values,
+  so nothing currently designed is lost.
+- Optional recovery escrow is the one legitimate exception. A recovery key,
+  itself encrypted under a user-held passphrase, can be returned but not used.
+  This addresses the sharpest edge in ADR-011, which is that losing the age key
+  destroys a vault irrecoverably.
+- Bring-your-own-vault remains the default regardless. The ADR-010 adapter
+  boundary makes it nearly free: `op` for 1Password users, their own tooling
+  for Infisical or Doppler users, SOPS for everyone else.
