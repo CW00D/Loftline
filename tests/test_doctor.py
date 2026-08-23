@@ -17,6 +17,7 @@ from loftline.doctor import (
     Capability,
     Status,
     VaultConfig,
+    default_age_key_file,
     require,
     run_checks,
 )
@@ -312,3 +313,51 @@ def test_the_sops_config_is_looked_for_beside_the_vault(tmp_path: Path) -> None:
     (tmp_path / ".sops.yaml").write_text(SOPS_CONFIG_TWO, encoding="utf-8")
 
     assert VaultConfig.from_env(vault_path=vault).sops_config == tmp_path / ".sops.yaml"
+
+
+# --- where sops actually looks for the age key -------------------------------
+
+
+def test_the_default_key_location_follows_sops_on_windows() -> None:
+    """sops uses Go's os.UserConfigDir, which is %AppData% on Windows.
+
+    Defaulting to the Linux path here reported a healthy key file that sops
+    would never consult, which is a false pass on the one check that matters.
+    """
+    path = default_age_key_file(
+        system="Windows",
+        environ={"APPDATA": r"C:\Users\chris\AppData\Roaming"},
+        home=Path(r"C:\Users\chris"),
+    )
+
+    assert path == Path(r"C:\Users\chris\AppData\Roaming\sops\age\keys.txt")
+
+
+def test_the_default_key_location_follows_sops_on_macos() -> None:
+    path = default_age_key_file(system="Darwin", environ={}, home=Path("/Users/chris"))
+
+    assert path == Path("/Users/chris/Library/Application Support/sops/age/keys.txt")
+
+
+def test_the_default_key_location_follows_sops_on_linux() -> None:
+    path = default_age_key_file(system="Linux", environ={}, home=Path("/home/chris"))
+
+    assert path == Path("/home/chris/.config/sops/age/keys.txt")
+
+
+def test_xdg_config_home_is_honoured_on_linux() -> None:
+    path = default_age_key_file(
+        system="Linux",
+        environ={"XDG_CONFIG_HOME": "/home/chris/elsewhere"},
+        home=Path("/home/chris"),
+    )
+
+    assert path == Path("/home/chris/elsewhere/sops/age/keys.txt")
+
+
+def test_windows_without_appdata_falls_back_to_the_profile() -> None:
+    path = default_age_key_file(
+        system="Windows", environ={}, home=Path(r"C:\Users\chris")
+    )
+
+    assert path == Path(r"C:\Users\chris\AppData\Roaming\sops\age\keys.txt")

@@ -265,6 +265,24 @@ def test_a_failing_set_does_not_leak_the_value_into_the_error(
 
     assert "rnd_supersecret" not in str(excinfo.value)
     assert "loftline/render/api_key" in str(excinfo.value)
+    assert "[value redacted]" in str(excinfo.value)
+
+
+def test_a_failing_set_keeps_the_diagnostic_around_the_redaction(
+    vault: SopsAgeVault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Redacting the value must not cost the reason it failed."""
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            argv, 128, stdout="", stderr="identity did not match any of the recipients"
+        )
+
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(VaultError, match="did not match any of the recipients"):
+        vault.set("loftline/render/api_key", "rnd_supersecret")
 
 
 def test_set_rejects_an_empty_value(vault: SopsAgeVault, no_subprocess: None) -> None:

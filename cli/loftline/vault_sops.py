@@ -97,10 +97,12 @@ class SopsAgeVault:
         completed = self._run(["set", str(self.vault_path), index, stamped])
         if completed.returncode != 0:
             # The stderr of a failed `sops set` can echo the argument vector,
-            # which carries the value. It is never reproduced here.
+            # which carries the value. Redact it rather than dropping stderr:
+            # swallowing the diagnostic turns every failure into a guess.
+            detail = completed.stderr.strip().replace(value, "[value redacted]")
             raise VaultError(
                 f"sops could not write {path} to {self.vault_path} "
-                f"(exit status {completed.returncode}). Run `loftline doctor`."
+                f"(exit status {completed.returncode}): {detail}"
             )
 
     # --- internals -----------------------------------------------------------

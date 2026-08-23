@@ -22,7 +22,7 @@ import platform
 import shutil
 import stat
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -59,6 +59,33 @@ class CheckResult:
     capability: Capability
 
 
+def default_age_key_file(
+    system: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Where sops looks for the age key, per platform.
+
+    sops uses Go's `os.UserConfigDir`, which is not `~/.config` everywhere.
+    Getting this wrong reports a healthy key file that sops never consults,
+    which is a false pass on the check that matters most.
+    """
+    system = system if system is not None else platform.system()
+    environ = environ if environ is not None else os.environ
+    home = home if home is not None else Path.home()
+
+    if system == "Windows":
+        appdata = environ.get("APPDATA")
+        base = Path(appdata) if appdata else home / "AppData" / "Roaming"
+    elif system == "Darwin":
+        base = home / "Library" / "Application Support"
+    else:
+        xdg = environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg) if xdg else home / ".config"
+
+    return base / "sops" / "age" / "keys.txt"
+
+
 @dataclass(frozen=True)
 class VaultConfig:
     """Where the vault, its SOPS configuration and the age key live."""
@@ -75,9 +102,7 @@ class VaultConfig:
             resolved = Path(from_env) if from_env else None
 
         key = os.environ.get(KEY_ENV)
-        age_key_file = (
-            Path(key) if key else Path.home() / ".config" / "sops" / "age" / "keys.txt"
-        )
+        age_key_file = Path(key) if key else default_age_key_file()
 
         sops_config: Path | None = None
         if resolved is not None:
@@ -256,8 +281,10 @@ def _full_disk_encryption() -> tuple[Status, str]:
             if answer == "Off":
                 return Status.FAIL, "BitLocker is off for the system drive"
             return Status.UNKNOWN, (
-                "could not determine BitLocker status; querying it usually needs "
-                "an elevated shell. Check it by hand."
+                "could not determine BitLocker status; querying it needs an "
+                "elevated shell. Run `manage-bde -status C:` as Administrator. "
+                "Windows 11 Home reports this as Device encryption, in Settings, "
+                "Privacy and security."
             )
 
         if system == "Darwin":
