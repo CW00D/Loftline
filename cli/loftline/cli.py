@@ -24,6 +24,7 @@ from .generate import generate
 from .models import load_descriptors, load_spec
 from .report import render_plan
 from .resolve import resolve
+from .secrets import GitHubSink, write_secrets
 from .vault_sops import SopsAgeVault
 
 app = typer.Typer(
@@ -36,6 +37,11 @@ vault_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(vault_app, name="vault")
+secrets_app = typer.Typer(
+    help="Write resolved credentials to where CI and hosting read them.",
+    no_args_is_help=True,
+)
+app.add_typer(secrets_app, name="secrets")
 
 VaultOption = Annotated[
     Path | None,
@@ -241,6 +247,62 @@ def new(
     if resolution.request:
         typer.echo(f"  run `loftline plan {spec}` for the acquire steps")
     typer.echo("Nothing has been provisioned. Next: git init, push, connect hosting.")
+
+
+@secrets_app.command("write")
+def secrets_write(
+    spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
+    repo: Annotated[
+        str, typer.Option("--repo", help="GitHub repository as OWNER/NAME.")
+    ],
+    vault: VaultOption = None,
+    credentials: CredentialsOption = Path("credentials.yml"),
+    partial: Annotated[
+        bool,
+        typer.Option(
+            "--partial",
+            help="Write what is held and generated; list what is still to acquire.",
+        ),
+    ] = False,
+    rotate: Annotated[
+        bool,
+        typer.Option("--rotate", help="Regenerate derived secrets that already exist."),
+    ] = False,
+) -> None:
+    """Write the spec's credentials to the repository's GitHub environments.
+
+    Held values are decrypted from the vault one at a time and handed to `gh`
+    on stdin. Derived values are generated once per environment and kept on
+    later runs. Nothing is printed but names and places.
+    """
+    config = VaultConfig.from_env(vault)
+    try:
+        require(config, Capability.DECRYPT)
+        assert config.vault_path is not None
+        sink = GitHubSink(repo)
+        sink.preflight()
+        project = load_spec(spec)
+        descriptors = load_descriptors(credentials)
+        store = SopsAgeVault(config.vault_path)
+        resolution = resolve(project, descriptors, store.index())
+        report = write_secrets(resolution, store, sink, partial=partial, rotate=rotate)
+    except LoftlineError as exc:
+        _fail(str(exc))
+
+    typer.echo(f"Secrets for {project.project_name} in {repo}")
+    typer.echo(f"  environments  {', '.join(report.environments) or 'none'}")
+    for entry in report.written:
+        typer.echo(f"  {entry.source:9}  {entry.github_secret:24} {entry.environment}")
+    if report.deferred:
+        typer.echo(f"  deferred to provisioning: {', '.join(report.deferred)}")
+    if report.outstanding:
+        typer.echo(
+            f"  still to acquire: {', '.join(report.outstanding)}  "
+            f"(run `loftline plan {spec}` for the steps)"
+        )
+    typer.echo(
+        "No value was printed. Push the deploying branch to see CI consume them."
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

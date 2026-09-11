@@ -68,3 +68,32 @@ jobs:
         # The Dockerfile is what the host deploys. A green test run against a
         # broken build is not green.
         run: docker build -t api .
+
+  secrets:
+    # On a deploying branch, run inside its GitHub environment and confirm the
+    # secrets Loftline wrote are there. Nothing is printed; presence is the
+    # whole check. A deploying branch with no secrets is broken, and this is
+    # where that shows up rather than in a failed deploy.
+    if: github.event_name == 'push' && (github.ref_name == 'staging' || github.ref_name == 'prod')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ${{ github.ref_name == 'prod' && 'production' || 'staging' }}
+    steps:
+      - name: Confirm the environment's secrets are present
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          missing=0
+          for name in JWT_SECRET SMTP_USER SMTP_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "$name is not set for this environment"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Run: loftline secrets write <spec> --repo ${GITHUB_REPOSITORY}"
+            exit 1
+          fi
+          echo "All present. Values are not shown."

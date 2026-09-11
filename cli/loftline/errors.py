@@ -36,6 +36,11 @@ class GenerateError(LoftlineError):
     """A project could not be rendered from the template."""
 
 
+class SecretsError(LoftlineError):
+    """Secrets could not be written: a sink refused, a derivation is unknown,
+    or credentials are still outstanding."""
+
+
 class UnknownCredentialError(LoftlineError):
     """A feature requires a credential that has no descriptor.
 
