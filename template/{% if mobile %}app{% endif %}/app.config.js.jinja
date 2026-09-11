@@ -1,0 +1,42 @@
+// Expo app configuration. The development variant gets its own bundle id so a
+// dev build and the store build can sit on one phone side by side.
+const IS_DEV = process.env.APP_VARIANT === "development";
+
+const NAME = "{{ project_name }}";
+const BUNDLE_ID = "com.{{ package_name }}";
+
+export default {
+  expo: {
+    name: IS_DEV ? `${NAME} Dev` : NAME,
+    slug: "{{ project_name }}",
+    version: "1.0.0",
+    orientation: "portrait",
+    icon: "./assets/icon.png",
+    userInterfaceStyle: "light",
+    splash: {
+      image: "./assets/splash-icon.png",
+      resizeMode: "contain",
+      backgroundColor: "#1f2937",
+    },
+    ios: {
+      supportsTablet: false,
+      bundleIdentifier: IS_DEV ? `${BUNDLE_ID}.dev` : BUNDLE_ID,
+      infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
+      },
+    },
+    android: {
+      package: IS_DEV ? `${BUNDLE_ID}.dev` : BUNDLE_ID,
+      adaptiveIcon: {
+        foregroundImage: "./assets/adaptive-icon.png",
+        backgroundColor: "#1f2937",
+      },
+    },
+    web: {
+      favicon: "./assets/favicon.png",
+    },
+    plugins: ["expo-secure-store", "expo-notifications"],
+    // `eas init` fills in extra.eas.projectId and updates.url the first time
+    // the project is linked to an Expo account. They are not template values.
+  },
+};

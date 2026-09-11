@@ -1,0 +1,57 @@
+"""Best-effort push notifications through Expo's push API.
+
+Overlay: present only when the project enables notifications.
+
+Expo relays to APNs and FCM, whose keys EAS manages at build time, so the
+server needs nothing beyond an optional access token. Set EXPO_PUSH_TOKEN if
+enhanced push security is enabled on the Expo account; without it, sends are
+unauthenticated, which Expo permits by default.
+
+Sends happen on a daemon thread and every failure is swallowed: a missed push
+must never turn into request latency or an error the caller has to explain.
+"""
+import json
+import logging
+import os
+import threading
+import urllib.request
+
+logger = logging.getLogger("app.push")
+
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+
+def send_push(tokens, title: str, body: str, data: dict | None = None):
+    """Queue a push to every token. Returns the sending thread, or None if
+    there was nobody to send to.
+
+    The thread is returned for callers that are about to exit: a daemon thread
+    dies with the interpreter, so a script must join it or the request is lost
+    mid-flight. The API never joins it and must not.
+    """
+    messages = [
+        {"to": t, "title": title, "body": body, "sound": "default",
+         **({"data": data} if data else {})}
+        for t in tokens
+        if t
+    ]
+    if not messages:
+        return None
+
+    headers = {"Content-Type": "application/json"}
+    access_token = os.environ.get("EXPO_PUSH_TOKEN")
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+
+    def _send():
+        try:
+            request = urllib.request.Request(
+                EXPO_PUSH_URL, data=json.dumps(messages).encode(), headers=headers
+            )
+            urllib.request.urlopen(request, timeout=10)
+        except Exception:
+            logger.exception("push to %d device(s) failed", len(messages))
+
+    thread = threading.Thread(target=_send, daemon=True)
+    thread.start()
+    return thread

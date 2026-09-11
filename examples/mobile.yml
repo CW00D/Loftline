@@ -1,0 +1,8 @@
+# A project with both overlays: an Expo app talking to the API, with push
+# notifications. `loftline new examples/mobile.yml _scratch/demoapp` renders it.
+project_name: demoapp
+package_name: demoapp
+database: aura
+mobile: true
+notifications: true
+environments: [staging, production]

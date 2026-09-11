@@ -20,9 +20,9 @@ import threading
 from email.message import EmailMessage
 from email.utils import formataddr
 
-logger = logging.getLogger("skeleton.emails")
+logger = logging.getLogger("app.emails")
 
-FROM_NAME = "Skeleton"
+FROM_NAME = "{{ project_name }}"
 
 
 def _host() -> str:

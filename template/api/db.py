@@ -44,6 +44,6 @@ def is_production() -> bool:
     """True when NEO4J_URI points at a hosted Aura instance.
 
     Anything destructive checks this first. The dev seed refuses outright;
-    nothing in this skeleton is allowed to wipe a database it did not create.
+    nothing in the base is allowed to wipe a database it did not create.
     """
     return "databases.neo4j.io" in os.environ.get("NEO4J_URI", "")

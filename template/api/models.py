@@ -1,7 +1,7 @@
 import email_validator
 from pydantic import BaseModel, EmailStr, Field
 
-# Dev and test users live at @skeleton.test; without this the validator
+# Dev and test users live at @example.test; without this the validator
 # rejects reserved TLDs like .test outright.
 email_validator.TEST_ENVIRONMENT = True
 

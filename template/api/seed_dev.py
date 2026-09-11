@@ -5,7 +5,7 @@
 Wipes the target database, applies the schema, and creates one user so the
 auth flow is walkable on first run:
 
-    dev@skeleton.test  password: skeleton
+    dev@example.test  password: localdev
 
 Refuses to run against a hosted Aura instance.
 """
@@ -25,11 +25,11 @@ if db.is_production():
         "Point api/.env at the local docker compose database first."
     )
 
-PASSWORD = "skeleton"
+PASSWORD = "localdev"
 
 # (handle, email, name)
 USERS = [
-    ("dev", "dev@skeleton.test", "Dev One"),
+    ("dev", "dev@example.test", "Dev One"),
 ]
 
 
@@ -51,7 +51,7 @@ def run():
 
         count = s.run("MATCH (u:User) RETURN count(u)").single()[0]
         print(f"seeded {count} user(s)")
-        print(f"dev login: dev@skeleton.test  password '{PASSWORD}'")
+        print(f"dev login: dev@example.test  password '{PASSWORD}'")
 
 
 if __name__ == "__main__":

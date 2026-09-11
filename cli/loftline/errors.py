@@ -32,6 +32,10 @@ class PreconditionError(LoftlineError):
     """An operational precondition checked by `loftline doctor` is not met."""
 
 
+class GenerateError(LoftlineError):
+    """A project could not be rendered from the template."""
+
+
 class UnknownCredentialError(LoftlineError):
     """A feature requires a credential that has no descriptor.
 

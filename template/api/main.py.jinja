@@ -1,4 +1,6 @@
+import importlib
 import logging
+import pkgutil
 import time
 from contextlib import asynccontextmanager
 
@@ -10,10 +12,10 @@ from fastapi import FastAPI
 from neo4j.exceptions import ServiceUnavailable
 
 import db
-from auth import router as auth_router
+import routers
 from schema import ensure_schema
 
-logger = logging.getLogger("skeleton.main")
+logger = logging.getLogger("app.main")
 
 # How long to wait for the database at boot before giving up. Under docker
 # compose the API container can win the race against Neo4j's own startup even
@@ -36,6 +38,21 @@ def _wait_for_database() -> None:
             time.sleep(2)
 
 
+def _include_routers(app: FastAPI) -> None:
+    """Include every router in the routers package, in name order.
+
+    Optional features add endpoints by adding a module to `routers/`. This
+    function never changes for them, which is what keeps a feature a
+    conditional path rather than a conditional block in a shared file.
+    """
+    for info in sorted(pkgutil.iter_modules(routers.__path__), key=lambda m: m.name):
+        module = importlib.import_module(f"routers.{info.name}")
+        router = getattr(module, "router", None)
+        if router is None:
+            raise RuntimeError(f"routers/{info.name}.py defines no `router`")
+        app.include_router(router)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _wait_for_database()
@@ -46,8 +63,8 @@ async def lifespan(app: FastAPI):
     db.close_driver()
 
 
-app = FastAPI(title="Skeleton API", lifespan=lifespan)
-app.include_router(auth_router)
+app = FastAPI(title="{{ project_name }} API", lifespan=lifespan)
+_include_routers(app)
 
 
 @app.get("/health")

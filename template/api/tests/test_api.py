@@ -1,4 +1,4 @@
-"""The skeleton's contract: health, and every auth endpoint, against a real graph."""
+"""The base's contract: health, and every auth endpoint, against a real graph."""
 
 
 def test_health_reports_the_database(client):
@@ -16,7 +16,7 @@ def test_signup_returns_a_token_that_identifies_the_user(client, user):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["email"] == "dev@skeleton.test"
+    assert body["email"] == "dev@example.test"
     assert body["handle"] == "dev"
     assert "password_hash" not in body
 
@@ -24,7 +24,7 @@ def test_signup_returns_a_token_that_identifies_the_user(client, user):
 def test_a_taken_email_is_a_409(client, user):
     response = client.post(
         "/signup",
-        json={"email": "DEV@skeleton.test", "password": "another password",
+        json={"email": "DEV@example.test", "password": "another password",
               "handle": "other", "name": "Other"},
     )
 
@@ -35,7 +35,7 @@ def test_a_taken_email_is_a_409(client, user):
 def test_a_taken_handle_is_a_409(client, user):
     response = client.post(
         "/signup",
-        json={"email": "other@skeleton.test", "password": "another password",
+        json={"email": "other@example.test", "password": "another password",
               "handle": "dev", "name": "Other"},
     )
 
@@ -58,7 +58,7 @@ def test_login_with_the_wrong_password_is_a_401(client, user):
 
 def test_login_for_an_unknown_email_is_the_same_401(client, user):
     right = client.post("/login", json={"email": user["email"], "password": "wrong password"})
-    unknown = client.post("/login", json={"email": "nobody@skeleton.test", "password": "x"})
+    unknown = client.post("/login", json={"email": "nobody@example.test", "password": "x"})
 
     assert unknown.status_code == 401
     assert unknown.json() == right.json()
@@ -126,7 +126,7 @@ def test_forgot_password_mails_a_code_that_resets_the_password(client, user, res
 
 def test_forgot_password_for_an_unknown_email_answers_the_same(client, user, reset_codes):
     known = client.post("/forgot-password", json={"email": user["email"]})
-    unknown = client.post("/forgot-password", json={"email": "nobody@skeleton.test"})
+    unknown = client.post("/forgot-password", json={"email": "nobody@example.test"})
 
     assert unknown.status_code == known.status_code == 200
     assert unknown.json() == known.json()

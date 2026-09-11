@@ -1,11 +1,13 @@
 """The `loftline` command line.
 
-Four commands so far: `doctor`, `vault list`, `vault set` and `plan`. None of
-them prints a credential value. `vault set` is the only one that writes, and
-it takes the value from a hidden prompt or stdin, never from an argument, so
-it stays out of shell history. There is deliberately no `vault get`: invariant
-1 forbids a value reaching stdout, so the only consumer of `get` is the secret
-writer in step 5, which passes values to `gh` and never to a terminal.
+Five commands: `doctor`, `vault list`, `vault set`, `plan` and `new`. None of
+them prints a credential value, and none provisions anything. `vault set` is
+the only one that writes to the vault, and it takes the value from a hidden
+prompt or stdin, never from an argument, so it stays out of shell history.
+`new` writes a rendered project and nothing else. There is deliberately no
+`vault get`: invariant 1 forbids a value reaching stdout, so the only consumer
+of `get` is the secret writer in step 5, which passes values to `gh` and never
+to a terminal.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import typer
 
 from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
+from .generate import generate
 from .models import load_descriptors, load_spec
 from .report import render_plan
 from .resolve import resolve
@@ -195,6 +198,49 @@ def plan(
         _fail(str(exc))
 
     typer.echo(render_plan(project, resolution, config.vault_path, spec, len(index)))
+
+
+@app.command()
+def new(
+    spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
+    destination: Annotated[
+        Path, typer.Argument(help="Directory to render the project into.")
+    ],
+    vault: VaultOption = None,
+    credentials: CredentialsOption = Path("credentials.yml"),
+    force: Annotated[
+        bool, typer.Option("--force", help="Render into a directory that is not empty.")
+    ] = False,
+) -> None:
+    """Generate a project from a spec.
+
+    Resolves the spec's credentials first, so a feature with no descriptor
+    fails here rather than at provisioning, then renders the template. Nothing
+    is provisioned and no credential value is read.
+    """
+    config = VaultConfig.from_env(vault)
+    try:
+        require(config, Capability.READ_INDEX)
+        assert config.vault_path is not None
+        project = load_spec(spec)
+        descriptors = load_descriptors(credentials)
+        index = SopsAgeVault(config.vault_path).index()
+        resolution = resolve(project, descriptors, index)
+        generate(project, destination, overwrite=force)
+    except LoftlineError as exc:
+        _fail(str(exc))
+
+    typer.echo(f"Generated {project.project_name} at {destination}")
+    typer.echo(f"  features     {', '.join(resolution.features)}")
+    typer.echo(
+        f"  credentials  {len(resolution.inject)} held, "
+        f"{len(resolution.derive)} generated, "
+        f"{len(resolution.request)} to acquire, "
+        f"{len(resolution.defer)} created at provisioning"
+    )
+    if resolution.request:
+        typer.echo(f"  run `loftline plan {spec}` for the acquire steps")
+    typer.echo("Nothing has been provisioned. Next: git init, push, connect hosting.")
 
 
 if __name__ == "__main__":  # pragma: no cover

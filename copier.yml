@@ -1,0 +1,50 @@
+# The question set. `loftline new` answers these from a loftline.yml spec and
+# never prompts; running `copier copy` by hand prompts for them instead.
+#
+# Nothing beyond these five until a real project demands it (CLAUDE.md). A new
+# question is a deliberate schema change: it is added here, to the Spec model
+# in cli/loftline/models.py, and to features.yml, and versioned as ADR-001
+# requires.
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_templates_suffix: .jinja
+_answers_file: .copier-answers.yml
+
+project_name:
+  type: str
+  help: Lowercase slug. Names the repository, the hosted services and the app.
+  validator: >-
+    {% if not (project_name | regex_search('^[a-z][a-z0-9-]{0,38}$')) %}
+    project_name must be a lowercase slug of letters, digits and hyphens,
+    starting with a letter, at most 39 characters
+    {% endif %}
+
+package_name:
+  type: str
+  default: "{{ project_name | replace('-', '_') }}"
+  help: Identifier form of the project name, for bundle ids and packages.
+  validator: >-
+    {% if not (package_name | regex_search('^[a-z][a-z0-9_]*$')) %}
+    package_name must be lowercase letters, digits and underscores,
+    starting with a letter
+    {% endif %}
+
+database:
+  type: str
+  help: The database slot, the one exclusive choice (ADR-004).
+  default: aura
+  choices:
+    # The base was extracted from a graph-backed project. A relational branch
+    # is a second extraction, not an edit of this one (ADR-014).
+    Neo4j Aura, a graph database: aura
+
+mobile:
+  type: bool
+  default: false
+  help: Include an Expo mobile app that signs in against the API.
+
+notifications:
+  type: bool
+  default: false
+  help: Push notifications through Expo. Adds the device registration endpoint and the sender.

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("NEO4J_URI", "neo4j://127.0.0.1:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
-os.environ.setdefault("NEO4J_PASSWORD", "skeleton")
+os.environ.setdefault("NEO4J_PASSWORD", "localdev")
 os.environ.setdefault("JWT_SECRET", "test-only-not-a-secret-test-only-not-a-secret")
 
 import db  # noqa: E402
@@ -75,7 +75,7 @@ def user(client):
     response = client.post(
         "/signup",
         json={
-            "email": "dev@skeleton.test",
+            "email": "dev@example.test",
             "password": "correct horse battery",
             "handle": "dev",
             "name": "Dev One",
@@ -84,7 +84,7 @@ def user(client):
     assert response.status_code == 200, response.text
     token = response.json()["token"]
     return {
-        "email": "dev@skeleton.test",
+        "email": "dev@example.test",
         "password": "correct horse battery",
         "headers": {"Authorization": f"Bearer {token}"},
     }

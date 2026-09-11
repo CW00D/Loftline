@@ -1,0 +1,76 @@
+"""The notifications overlay: device registration, and the sender's shape."""
+import json
+import urllib.request
+
+import db
+import push
+
+
+def stored_token(email: str):
+    with db.get_session() as s:
+        row = s.run("MATCH (u:User {email: $email}) RETURN u.push_token AS t", email=email).single()
+    return row["t"] if row else None
+
+
+def test_registering_a_device_stores_its_token(client, user):
+    response = client.post(
+        "/me/push-token", json={"token": "ExponentPushToken[abc]"}, headers=user["headers"]
+    )
+
+    assert response.status_code == 200
+    assert stored_token(user["email"]) == "ExponentPushToken[abc]"
+
+
+def test_a_device_can_be_unregistered(client, user):
+    client.post("/me/push-token", json={"token": "ExponentPushToken[abc]"}, headers=user["headers"])
+
+    response = client.delete("/me/push-token", headers=user["headers"])
+
+    assert response.status_code == 200
+    assert stored_token(user["email"]) is None
+
+
+def test_registration_needs_a_token(client):
+    assert client.post("/me/push-token", json={"token": "x"}).status_code == 401
+
+
+def test_send_push_addresses_every_device_and_nothing_else(monkeypatch):
+    seen = []
+
+    def fake_urlopen(request, timeout):
+        seen.append((request.full_url, dict(request.header_items()), json.loads(request.data)))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("EXPO_PUSH_TOKEN", raising=False)
+
+    thread = push.send_push(["tok-1", None, "tok-2"], "Hello", "World", data={"k": "v"})
+    thread.join(timeout=5)
+
+    url, headers, messages = seen[0]
+    assert url == push.EXPO_PUSH_URL
+    assert [m["to"] for m in messages] == ["tok-1", "tok-2"]
+    assert messages[0]["data"] == {"k": "v"}
+    assert not any(k.lower() == "authorization" for k in headers)
+
+
+def test_send_push_authenticates_when_an_access_token_is_set(monkeypatch):
+    seen = []
+
+    def fake_urlopen(request, timeout):
+        seen.append(dict(request.header_items()))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv("EXPO_PUSH_TOKEN", "expo-secret")
+
+    push.send_push(["tok-1"], "Hello", "World").join(timeout=5)
+
+    assert seen[0].get("Authorization") == "Bearer expo-secret"
+
+
+def test_send_push_to_nobody_sends_nothing(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("a request was sent")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+
+    assert push.send_push([None, ""], "Hello", "World") is None

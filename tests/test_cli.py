@@ -192,23 +192,27 @@ def test_plan_without_a_vault_configured_fails_with_advice(
 def test_plan_fails_loudly_on_a_credential_with_no_descriptor(
     runner: CliRunner, vault: Path, tmp_path: Path, offline: None
 ) -> None:
-    spec = tmp_path / "loftline.yml"
-    spec.write_text(
-        "project_name: beerreel\n"
-        "package_name: beerreel\n"
-        "database: postgres\n"
-        "notifications: true\n",
+    """A descriptor file that has never heard of what the base needs."""
+    thin = tmp_path / "credentials.yml"
+    thin.write_text(
+        "render_api_key:\n"
+        "  vendor: render\n"
+        "  scope: account\n"
+        "  state: held\n"
+        "  consumed_by: [ci]\n"
+        "  environments: [staging, production]\n"
+        "  github_secret: RENDER_API_KEY\n"
+        "  vault_path: loftline/render/api_key\n",
         encoding="utf-8",
     )
 
     outcome = runner.invoke(
-        app,
-        ["plan", str(spec), "--vault", str(vault), "--credentials", str(CREDENTIALS)],
+        app, ["plan", str(SPEC), "--vault", str(vault), "--credentials", str(thin)]
     )
 
     assert outcome.exit_code != 0
-    assert "expo_account_id" in outcome.output
-    assert "notifications" in outcome.output
+    assert "smtp_user" in outcome.output
+    assert "base" in outcome.output
     assert "credentials.yml" in outcome.output
 
 

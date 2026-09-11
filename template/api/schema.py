@@ -13,7 +13,7 @@ import logging
 
 from neo4j.exceptions import Neo4jError
 
-logger = logging.getLogger("skeleton.schema")
+logger = logging.getLogger("app.schema")
 
 CONSTRAINTS = [
     "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
