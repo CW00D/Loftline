@@ -746,3 +746,43 @@ projects, applied by hand. The decisions below are the ones it left open.
   directory, as the roadmap says. Wrapping it is a later convenience.
 - `prevent_destroy` on the repository means `terraform destroy` refuses;
   deleting a product's repository is a deliberate act in GitHub.
+
+---
+
+## ADR-019: The MCP server, and building it before hosting
+
+**Status:** Accepted. Amends the order in ADR-015.
+
+**Context.** ADR-015 placed the MCP wrapper after Step 8. It was brought
+forward for a reason the original order did not weigh: the wrapper is the
+best way to *see* what exists, and understanding the system before extending
+it is worth more than one more step of extension. Everything the MCP wraps
+already works; Step 8 adds one tool later.
+
+**Decision.**
+
+1. **A thin layer over the existing commands.** `doctor`, `vault_list`,
+   `plan`, `new` and `secrets_write` are tools. Three read-only views exist
+   so the model can explain the system: `spec_schema`, `features` and
+   `credentials`.
+2. **No tool takes or returns a credential value.** There is no `vault_set`
+   tool and there will not be one. Storing a value is a terminal command,
+   because anything that passes through a conversation is in a log. The
+   server's instructions tell the model to refuse a value if one is offered.
+3. **Specs travel as YAML text.** The model authors the spec; `plan` and
+   `new` validate it. `new` writes it into the generated project as
+   `loftline.yml`, so a project records what it was made from.
+4. **The model chooses; the tool acts.** Each tool is deterministic and the
+   person approves each call through the client. This is ADR-001's boundary
+   as it applies to a tool-calling model: the model is confined to
+   elicitation and to choosing which deterministic step runs next.
+5. **Stdio, started by the client.** `.mcp.json` at the repository root
+   registers the server for Claude Code; the entry point is `loftline-mcp`.
+
+**Consequences.**
+
+- The remaining order is Step 8, then Step 6, then overlays, then accounts.
+- Tests drive the server over an in-memory transport with no network, no
+  `sops` and no `gh`, and assert the negative space: no parameter named for
+  a secret, no value in any result.
+- When Step 8 lands it adds a `provision` tool with the same shape.
