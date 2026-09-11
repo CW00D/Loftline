@@ -88,6 +88,9 @@ Features declare what they need. The resolver unions the requirements of every
 enabled feature in the spec.
 
 ```yaml
+base:
+  requires: [jwt_secret, smtp_user, smtp_password]
+
 notifications:
   requires: [expo_push_token, expo_account_id]
 

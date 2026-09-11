@@ -18,6 +18,13 @@ version: 1
 
 features:
 
+  # The base template itself: what every generated project needs before any
+  # optional feature is considered. The skeleton in template/ signs sessions
+  # with a per-project secret and sends password reset codes over SMTP.
+  base:
+    enabled_when: {always: true}
+    requires: [jwt_secret, smtp_user, smtp_password]
+
   # Hosting is not a spec question. There is one hosting provider, so the
   # feature is unconditional. It becomes a choice the day there is a second,
   # and that is a spec schema change made deliberately.
