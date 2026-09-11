@@ -41,6 +41,10 @@ class SecretsError(LoftlineError):
     or credentials are still outstanding."""
 
 
+class ProvisionError(LoftlineError):
+    """A vendor refused, or provisioning cannot proceed safely."""
+
+
 class UnknownCredentialError(LoftlineError):
     """A feature requires a credential that has no descriptor.
 

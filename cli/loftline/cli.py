@@ -23,8 +23,11 @@ from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
 from .generate import generate
 from .models import load_descriptors, load_spec
+from .providers.aura import AuraClient
+from .providers.render import RenderClient
+from .provision import provision
 from .report import render_plan
-from .resolve import resolve
+from .resolve import Derive, Inject, resolve
 from .secrets import GitHubSink, write_secrets
 from .vault_sops import SopsAgeVault
 
@@ -336,6 +339,91 @@ def secrets_write(
     typer.echo(
         "No value was printed. Push the deploying branch to see CI consume them."
     )
+
+
+@app.command("provision")
+def provision_command(
+    spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
+    repo: Annotated[
+        str, typer.Option("--repo", help="GitHub repository as OWNER/NAME.")
+    ],
+    vault: VaultOption = None,
+    credentials: CredentialsOption = Path("credentials.yml"),
+    environment: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--environment",
+            help="Provision only these environments. Repeatable. Default: all.",
+        ),
+    ] = None,
+    aura_type: Annotated[
+        str,
+        typer.Option(
+            "--aura-type", help="Aura instance type: free-db or professional-db."
+        ),
+    ] = "free-db",
+    region: Annotated[
+        str, typer.Option("--region", help="Aura region.")
+    ] = "europe-west1",
+    no_deploy: Annotated[
+        bool,
+        typer.Option(
+            "--no-deploy", help="Write everything but do not trigger a deploy."
+        ),
+    ] = False,
+) -> None:
+    """Create each environment's database, write every credential, and deploy.
+
+    Needs the repository's render.yaml connected once as a Blueprint in the
+    Render dashboard, and every held credential present in the vault. The
+    Aura API key and the Render API key are read from the vault.
+    """
+    config = VaultConfig.from_env(vault)
+    try:
+        require(config, Capability.DECRYPT)
+        assert config.vault_path is not None
+        github = GitHubSink(repo)
+        github.preflight()
+        project = load_spec(spec)
+        descriptors = load_descriptors(credentials)
+        store = SopsAgeVault(config.vault_path)
+        resolution = resolve(project, descriptors, store.index())
+        targets: list[Inject | Derive] = [*resolution.inject, *resolution.derive]
+        for environment_name in sorted({e for t in targets for e in t.environments}):
+            github.ensure_environment(environment_name)
+        render = RenderClient(store.get(descriptors["render_api_key"].vault_path or ""))
+        aura = AuraClient(
+            store.get(descriptors["aura_client_id"].vault_path or ""),
+            store.get(descriptors["aura_client_secret"].vault_path or ""),
+        )
+        report = provision(
+            project,
+            resolution,
+            store,
+            github,
+            render,
+            aura,
+            environments=environment,
+            instance_type=aura_type,
+            region=region,
+            deploy=not no_deploy,
+        )
+    except LoftlineError as exc:
+        _fail(str(exc))
+
+    typer.echo(f"Provisioned {project.project_name} in {repo}")
+    for entry in report.environments:
+        health = {True: "healthy", False: "UNHEALTHY", None: "not checked"}[
+            entry.healthy
+        ]
+        typer.echo(
+            f"  {entry.environment:11} {entry.service}  instance {entry.instance} "
+            f"({entry.instance_status})  deploy {entry.deploy_status or 'skipped'}  "
+            f"{health}"
+        )
+        if entry.url:
+            typer.echo(f"  {'':11} {entry.url}")
+    typer.echo("No value was printed.")
 
 
 @mcp_app.command("config")
