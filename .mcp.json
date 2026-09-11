@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "loftline": {
+      "command": "python",
+      "args": ["-m", "uv", "run", "loftline-mcp"],
+      "env": {
+        "LOFTLINE_VAULT": "${LOFTLINE_VAULT}"
+      }
+    }
+  }
+}

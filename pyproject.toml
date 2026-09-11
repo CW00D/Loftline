@@ -9,10 +9,12 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "copier>=9.18.2",
+    "mcp>=2.2.0",
 ]
 
 [project.scripts]
 loftline = "loftline.cli:app"
+loftline-mcp = "loftline.mcp_server:main"
 
 [dependency-groups]
 dev = [
