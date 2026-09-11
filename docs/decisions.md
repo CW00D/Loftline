@@ -644,3 +644,50 @@ hard invariants forced several structural decisions.
   notifications changes nothing in the app.
 - A second hosting provider or database is a new question, a new conditional
   path, and a schema version, never a conditional block.
+
+---
+
+## ADR-017: The secret writer
+
+**Status:** Accepted
+
+**Context.** Step 5 takes the resolver's output and puts values where CI and
+hosting read them. It is the only step that handles credential values, so
+its shape is mostly about what it refuses to do.
+
+**Decision.**
+
+1. **GitHub environment secrets first, through `gh`.** The value goes to
+   `gh secret set` on stdin, which encrypts it locally before sending. It is
+   never an argument, never printed, never on disk. Environments are created
+   with an idempotent PUT before anything is written.
+2. **Render's sink waits for Step 8.** Render environment variables attach
+   to a service, and the service does not exist until provisioning creates
+   it. The writer's sink interface is the seam; the Render sink arrives with
+   the provisioner.
+3. **Derived values are generated once per environment and kept.** A second
+   run finds the secret present and leaves it, so re-running the writer
+   never rotates every session token. `--rotate` regenerates deliberately.
+   Staging and production get different values.
+4. **Derivations are named, not described.** A derivable descriptor's
+   `derivation` is a key into a registry in `secrets.py`, and an unknown key
+   is a loud error checked before anything is decrypted. Prose belongs in a
+   comment beside it.
+5. **Outstanding credentials block the whole write.** If the plan still has
+   things to acquire, nothing is written unless `--partial` is passed, which
+   writes what is held and generated and lists the rest. A half-configured
+   environment should be a choice, not a surprise.
+6. **The gate is a CI job.** On a push to `staging` or `prod`, a job runs in
+   the matching GitHub environment and fails if the base's secrets are
+   absent, printing names only. A deploying branch without its secrets is
+   broken, and this is where that surfaces.
+
+**Consequences.**
+
+- `gh` must be installed and logged in on the machine running the writer.
+  The writer checks both before decrypting anything.
+- The writer never stores into the vault, and the vault adapter's `get` is
+  called from nowhere else. That is checked by tests, not by review.
+- The CI secrets job means a freshly generated project's `staging` and
+  `prod` branches are red until `loftline secrets write` has run for it. The
+  `dev` branch is unaffected.
