@@ -92,10 +92,10 @@ base:
   requires: [jwt_secret, smtp_user, smtp_password]
 
 notifications:
-  requires: [expo_push_token, expo_account_id]
+  requires: [expo_push_token]
 
 mobile:
-  requires: [apple_team_id, app_store_connect_key, apple_app_specific_password]
+  requires: [expo_access_token, apple_team_id, app_store_connect_key, apple_app_specific_password]
 
 database.aura:
   requires: [aura_client_id, aura_client_secret]

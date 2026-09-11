@@ -124,8 +124,9 @@ def test_enabled_features_come_back_sorted() -> None:
 def test_shipped_mapping_matches_the_documented_table() -> None:
     features = load_default_features()
 
-    assert features["notifications"].requires == ("expo_push_token", "expo_account_id")
+    assert features["notifications"].requires == ("expo_push_token",)
     assert features["mobile"].requires == (
+        "expo_access_token",
         "apple_team_id",
         "app_store_connect_key",
         "apple_app_specific_password",

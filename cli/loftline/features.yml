@@ -43,10 +43,14 @@ features:
     requires: [aura_client_id, aura_client_secret]
     produces: [neo4j_uri, neo4j_password]
 
+  # EAS builds need an Expo access token in CI and Apple credentials for
+  # signing and submission, configured once through EAS.
   mobile:
     enabled_when: {field: mobile, is_true: true}
-    requires: [apple_team_id, app_store_connect_key, apple_app_specific_password]
+    requires: [expo_access_token, apple_team_id, app_store_connect_key, apple_app_specific_password]
 
+  # Expo's push API needs only an access token, and only if enhanced push
+  # security is on. The EAS project id is app configuration, not a secret.
   notifications:
     enabled_when: {field: notifications, is_true: true}
-    requires: [expo_push_token, expo_account_id]
+    requires: [expo_push_token]
