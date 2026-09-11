@@ -1,0 +1,47 @@
+# The complete system, locally, with no external dependency.
+#
+#   docker compose up -d          # start Neo4j and the API
+#   docker compose up -d neo4j    # just the database, to run the API with uvicorn
+#   docker compose down           # stop, keeping the data
+#   docker compose down -v        # stop and wipe the dev data
+#
+# The API is at http://localhost:8000, the Neo4j browser at http://localhost:7474
+# (login neo4j / skeleton). Seed a dev user with `python api/seed_dev.py`.
+#
+# This is ONLY the development system. Production credentials are written to
+# the host by Loftline and never appear here.
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: skeleton-neo4j-dev
+    ports:
+      - "7687:7687"   # bolt, which the API connects to
+      - "7474:7474"   # browser UI
+    environment:
+      NEO4J_AUTH: neo4j/skeleton
+      NEO4J_server_memory_heap_max__size: 512m
+    volumes:
+      - skeleton_dev_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p skeleton 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  api:
+    build: ./api
+    container_name: skeleton-api-dev
+    ports:
+      - "8000:8000"
+    environment:
+      NEO4J_URI: neo4j://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: skeleton
+      # Development only. Loftline generates the real one per project.
+      JWT_SECRET: dev-only-not-a-secret-dev-only-not-a-secret
+    depends_on:
+      neo4j:
+        condition: service_healthy
+
+volumes:
+  skeleton_dev_data:

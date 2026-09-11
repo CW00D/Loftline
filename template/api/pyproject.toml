@@ -1,0 +1,25 @@
+# Tooling only. The API is run with uvicorn and built by the Dockerfile; it is
+# not a distributable package.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+# E402: main.py and seed_dev.py call load_dotenv() before importing the
+# modules that read the environment. That order is the point.
+# B008: `user=Depends(current_user)` in a parameter default is FastAPI's
+# documented dependency injection idiom, not a mistake.
+ignore = ["E402", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Inline CSS in the email template runs long by nature.
+"emails.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # Starlette's own anyio usage, not ours.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]

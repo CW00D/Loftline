@@ -1,0 +1,113 @@
+"""Transactional email over SMTP. Currently just the password reset code.
+
+Sends happen on a daemon thread and every failure is swallowed, so a slow or
+unreachable mail server never becomes request latency and never turns into an
+error the caller has to explain. /forgot-password deliberately says the same
+thing regardless.
+
+Without SMTP_USER and SMTP_PASSWORD nothing is sent and the API still runs,
+which is the normal state of a dev box. The reset code is logged in that case
+so the flow is still walkable locally.
+
+Defaults are Gmail with an app password, which is the sender the descriptors
+in the Loftline vault describe. Any SMTP host works: set SMTP_HOST and
+SMTP_PORT.
+"""
+import logging
+import os
+import smtplib
+import threading
+from email.message import EmailMessage
+from email.utils import formataddr
+
+logger = logging.getLogger("skeleton.emails")
+
+FROM_NAME = "Skeleton"
+
+
+def _host() -> str:
+    return os.environ.get("SMTP_HOST", "smtp.gmail.com")
+
+
+def _port() -> int:
+    return int(os.environ.get("SMTP_PORT", "587"))
+
+
+def sender() -> str:
+    return os.environ.get("SMTP_USER", "")
+
+
+def is_configured() -> bool:
+    return bool(sender() and os.environ.get("SMTP_PASSWORD"))
+
+
+def _deliver(to: str, subject: str, text: str, html: str) -> None:
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = formataddr((FROM_NAME, sender()))
+    message["To"] = to
+    # Plain text first, HTML as the alternative: a client that cannot render
+    # the HTML still shows a readable code rather than markup.
+    message.set_content(text)
+    message.add_alternative(html, subtype="html")
+
+    with smtplib.SMTP(_host(), _port(), timeout=15) as server:
+        server.starttls()
+        server.login(sender(), os.environ["SMTP_PASSWORD"])
+        server.send_message(message)
+
+
+def send(to: str, subject: str, text: str, html: str) -> None:
+    """Queue an email. Returns immediately; never raises."""
+    if not is_configured():
+        logger.warning("SMTP is not configured; dropping %r to %s", subject, to)
+        return
+
+    def _run():
+        try:
+            _deliver(to, subject, text, html)
+            logger.info("Sent %r to %s", subject, to)
+        except Exception:
+            logger.exception("Failed to send %r to %s", subject, to)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _reset_html(name: str, code: str, ttl_minutes: int) -> str:
+    return f"""\
+<!DOCTYPE html>
+<html>
+  <body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1c1917;">
+    <div style="max-width:460px;margin:40px auto;padding:32px;background:#ffffff;border:1px solid #e5e5e5;border-radius:14px;">
+      <p style="margin:0 0 24px;font-size:20px;font-weight:700;">{FROM_NAME}</p>
+      <h1 style="margin:0 0 16px;font-size:23px;font-weight:700;">Reset your password</h1>
+      <p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:#44403c;">
+        Hi {name},<br><br>
+        Enter this code to set a new password. It expires in {ttl_minutes} minutes.
+      </p>
+      <div style="border:2px solid #1c1917;border-radius:10px;padding:18px;text-align:center;margin-bottom:28px;">
+        <span style="font-size:34px;font-weight:700;letter-spacing:8px;">{code}</span>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.6;color:#78716c;">
+        If you did not ask for this, you can ignore this email. Your password
+        will not change until the code is used.
+      </p>
+    </div>
+  </body>
+</html>
+"""
+
+
+def send_password_reset(to: str, name: str, code: str, ttl_minutes: int) -> None:
+    text = (
+        f"Hi {name},\n\n"
+        f"Your {FROM_NAME} password reset code is {code}. "
+        f"It expires in {ttl_minutes} minutes.\n\n"
+        "If you did not ask for this, you can ignore this email. Your password "
+        "will not change until the code is used.\n"
+    )
+    if not is_configured():
+        # The one case worth logging the code itself: no mail server, so this
+        # is the only way to finish the flow on a dev box.
+        logger.warning("Password reset code for %s: %s", to, code)
+    send(to, f"Reset your {FROM_NAME} password", text, _reset_html(name, code, ttl_minutes))

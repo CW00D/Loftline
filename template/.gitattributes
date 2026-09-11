@@ -1,0 +1,13 @@
+# Store LF in the repository and check out LF everywhere. Keeps Windows and
+# other machines consistent and stops the "LF will be replaced by CRLF" noise.
+* text=auto eol=lf
+
+# Binary files, never converted.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.p8   binary
+*.p12  binary

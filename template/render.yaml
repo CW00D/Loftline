@@ -1,0 +1,59 @@
+# Render blueprint. Connect once by hand: dashboard, New, Blueprint, pick this
+# repository. Render then manages both services from this file.
+#
+# Two services, one per deploying branch (ADR-013 in Loftline): `staging`
+# tracks the staging branch, `prod` tracks the prod branch. Promotion is a
+# merge from one branch to the next, never a cherry-pick.
+#
+# Every env var is sync: false. Their values are written to the host by
+# Loftline's secret writer and never appear in this repository. JWT_SECRET is
+# generated per project and per environment.
+#
+# Starter plan: always-on, no cold starts. The free tier sleeps after fifteen
+# idle minutes and takes 30 to 60 seconds to wake.
+services:
+  - type: web
+    name: skeleton-api-staging
+    runtime: docker
+    plan: starter
+    branch: staging
+    rootDir: api
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USER
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+
+  - type: web
+    name: skeleton-api-prod
+    runtime: docker
+    plan: starter
+    branch: prod
+    rootDir: api
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USER
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false

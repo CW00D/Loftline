@@ -393,3 +393,158 @@ CLI. Exposed to a model: `list_features`, `validate_spec`, `plan(spec)`, and
 - Building this before Step 5 means designing a tool surface for an engine
   whose shape is still being discovered, and doing the interface work twice.
 
+---
+
+## ADR-014: If a hosted vault is ever built, the server holds ciphertext only
+
+**Status:** Accepted in principle. Out of scope until the CLI has a user who is
+not the author.
+
+**Context.** A hosted product with accounts would give sync across devices,
+team sharing, recovery from a lost laptop, and onboarding for someone with no
+existing vault. These are real and a purely client-side design cannot provide
+them. The tempting implementation is server-side custody of values, by analogy
+with GitHub environment secrets.
+
+**Decision.** Accounts are acceptable. Server-side custody of plaintext, or of
+decryption keys, is not. The server holds ciphertext; the client holds a key
+derived from a passphrase that never leaves the device.
+
+**Consequences.**
+
+- The GitHub analogy does not transfer. GitHub holds secrets as a side effect
+  of a product users already trust with source code, backed by HSMs and a large
+  security organisation. Loftline would be asking for production credentials as
+  the first thing it does, before it has done anything for the user.
+- A store of hosting, DNS, database and app store credentials across many small
+  companies is a higher-value target than most of the accounts it protects.
+  Tooling vendors are attacked for exactly this reason.
+- Holding plaintext or keys would require envelope encryption with a managed
+  KMS, per-user data keys, rotation, immutable per-read audit logs, a
+  pre-planned breach disclosure process, a UK GDPR processor agreement with
+  every customer carrying a 72-hour notification duty, and professional
+  indemnity plus cyber insurance. It also creates an obligation that outlives
+  enthusiasm for the project: a vault users depend on cannot be abandoned.
+- Holding ciphertext removes nearly all of that. A breach yields useless blobs.
+- The inverted split, server holds the key and client holds the ciphertext, is
+  rejected explicitly. The key must reach the client at generation time
+  regardless, so the property is not preserved; it centralises the one item
+  that unlocks everything; it still requires the full account system; and it
+  delivers no sync, since the vault remains on a single machine.
+- Cost of the correct design: no server-side processing of secret values. No
+  validating a key against a vendor, no inspecting a token for expiry. The
+  resolver already operates on path indexes and timestamps rather than values,
+  so nothing currently designed is lost.
+- Optional recovery escrow is the one legitimate exception. A recovery key,
+  itself encrypted under a user-held passphrase, can be returned but not used.
+  This addresses the sharpest edge in ADR-011, which is that losing the age key
+  destroys a vault irrecoverably.
+- Bring-your-own-vault remains the default regardless. The ADR-010 adapter
+  boundary makes it nearly free: `op` for 1Password users, their own tooling
+  for Infisical or Doppler users, SOPS for everyone else.
+---
+
+## ADR-013: Three long-lived branches, promoted by merge
+
+**Status:** Accepted. Reverses ADR-003.
+
+**Context.** ADR-003 chose a single trunk with GitHub Environments as the
+deployment targets, on the grounds that long-lived branches accumulate merge
+drift and that production gating belongs in environment protection rules. On
+reflection the tool is for individuals and small teams, and for that audience
+the branch *is* the mental model: "what is on staging" is answered by looking
+at the staging branch, not by reading a deployment log. The auditability that
+ADR-003 valued is real but is not the cost being paid by that audience.
+
+**Decision.** Three long-lived branches, `dev`, `staging` and `prod`, in every
+generated repository. `dev` is the default branch and the base for feature
+branches. Promotion is a merge of the whole branch, `dev` into `staging` and
+`staging` into `prod`, never a cherry-pick.
+
+The branches mean different things for a web project and a mobile project,
+selected by the `mobile` question in the spec:
+
+| Branch | Web project | Mobile project |
+| --- | --- | --- |
+| `dev` | Local only, `docker compose up`. No hosted deployment. | Same. |
+| `staging` | Deploys automatically to the `staging` environment. | Produces the release candidate build. This is what is submitted to the stores. |
+| `prod` | Deploys automatically to the `production` environment. | Housekeeping: records what was submitted. Store submission is manual, in App Store Connect and the Play Console, and is not automated. |
+
+GitHub Environments are retained for what they are good at, holding
+environment-scoped secrets, and each deploying branch maps to one: `staging`
+to `staging`, `prod` to `production`. The secret writer in Step 5 is unaffected.
+
+**Consequences.**
+
+- Merge drift is the known failure mode of this model and the mitigation is
+  procedural: promotion is always a merge of the entire source branch. A
+  hotfix branches from `prod`, merges to `prod`, and is then merged back down
+  through `staging` to `dev` immediately. The moment someone cherry-picks, the
+  three branches stop being a sequence and become three products.
+- Branch protection replaces environment protection as the production gate.
+  `prod` requires a pull request from `staging`; direct pushes are refused.
+  This is configured by the Terraform module in Step 7.
+- Preview environments per pull request are dropped. A feature branch is
+  tried locally, then on `staging`.
+- The hosting blueprint declares two services, one tracking `staging` and one
+  tracking `prod`, rather than one service with previews.
+- A web project's `staging` environment is optional in practice and is kept
+  anyway, so that the two project types share one branch model rather than
+  two.
+- Mobile store submission stays manual by design. Automating it is Step 9 and
+  remains the worst return in the plan.
+
+---
+
+## ADR-014: What the base template is
+
+**Status:** Accepted
+
+**Context.** Step 3 extracted the skeleton in `template/` from BeerReel, the
+most recent deployed project. Stripping a real application forces decisions
+about where the base ends and overlays begin, and about what may change during
+extraction. Those are recorded here so the next extraction, or the first
+overlay, does not re-decide them.
+
+**Decision.**
+
+1. **The base is a FastAPI backend on Neo4j** with self-hosted email and
+   password auth, a healthcheck, the schema applied at boot, one CI workflow,
+   a Render blueprint and a complete local system under Docker Compose. It
+   deploys and runs with nothing but a graph database and a JWT secret.
+2. **Object storage and push notifications are overlays, not base.** Each was
+   used by one project. The rule that a template feature must be needed twice
+   applies, and each degrades gracefully in its absence anyway. Their
+   descriptors already exist for when the overlay lands.
+3. **`database: postgres` has no template branch yet.** The base was
+   extracted from a graph-backed project; the relational branch is Step 4
+   work and will be a second extraction, not an edit of this one.
+4. **The placeholder literal is `skeleton`.** Everywhere the source said the
+   product's name, the skeleton says `skeleton` or `Skeleton`, consistently,
+   so Step 4's parameterisation is a mechanical substitution and nothing else.
+5. **Three changes were made beyond stripping**, each because the extracted
+   form contradicted an accepted decision or a hard invariant. The API was
+   added to Docker Compose, because ADR-006 requires the whole system to run
+   locally and the source ran only the database there. The boot waits for the
+   database with a bounded retry, because a compose start can win the race
+   against the database's own health check. A `JWT_SECRET` shorter than 32
+   bytes is refused at first use rather than warned about, because RFC 7518
+   requires the length and a warning at boot is read by nobody.
+6. **The Render blueprint declares two services**, one per deploying branch,
+   as ADR-013 requires. Every environment variable is `sync: false`; values
+   are written by Loftline and never appear in the repository.
+
+**Consequences.**
+
+- The mobile app is a separate extraction, gated by Step 9's pipeline rather
+  than Step 3's deploy. Its auth screens map one to one onto the endpoints
+  the skeleton keeps.
+- `credentials.yml` gained `aura_client_secret` and `features.yml` gained a
+  `base` feature requiring `jwt_secret`, `smtp_user` and `smtp_password`,
+  because the skeleton needs them and the resolver had no way to say so.
+- The tests in `template/api/tests` run against a real Neo4j and wipe it, and
+  refuse to run against a hosted instance. They are the skeleton's contract;
+  an overlay that breaks them is not an overlay.
+- The skeleton's own tooling (`ruff`, `pytest`) is configured inside
+  `template/api`, and `template/` is excluded from Loftline's. The two are
+  different projects with different rules.

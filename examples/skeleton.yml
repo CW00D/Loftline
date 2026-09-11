@@ -1,0 +1,9 @@
+# The spec that describes the base template itself: a graph-backed backend,
+# no mobile app, no push. `loftline plan examples/skeleton.yml` is the to-do
+# list for deploying the skeleton.
+project_name: skeleton
+package_name: skeleton
+database: aura
+mobile: false
+notifications: false
+environments: [staging, production]

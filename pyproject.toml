@@ -35,6 +35,8 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 88
 src = ["cli", "tests"]
+# template/ is generated-project code with its own tooling in template/api.
+extend-exclude = ["template"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ANN", "RUF"]
@@ -46,3 +48,4 @@ select = ["E", "F", "I", "UP", "B", "ANN", "RUF"]
 python_version = "3.12"
 mypy_path = "cli"
 strict = true
+exclude = ["^template/"]
