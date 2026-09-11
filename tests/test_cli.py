@@ -131,6 +131,9 @@ def test_plan_prints_acquire_instructions_inline(
 
     assert "render_api_key" in output
     assert "dashboard.render.com" in output
+    # The exact command, by credential name, so nobody has to guess it from the
+    # vault path. A model did exactly that once.
+    assert "loftline vault set render_api_key" in output
 
 
 def test_plan_names_the_vault_path_it_read(

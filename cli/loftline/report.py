@@ -108,7 +108,8 @@ def _request(resolution: Resolution) -> list[str]:
         return lines
     for entry in resolution.request:
         lines.append(f"{INDENT}{entry.name}  ({entry.vendor}, {entry.reason})")
-        lines.append(f"{INDENT}{INDENT}store at  {entry.vault_path}")
+        lines.append(f"{INDENT}{INDENT}store with  loftline vault set {entry.name}")
+        lines.append(f"{INDENT}{INDENT}vault path  {entry.vault_path}")
         if entry.acquire:
             lines.append(f"{INDENT}{INDENT}how to acquire:")
             lines += [

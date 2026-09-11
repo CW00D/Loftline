@@ -51,8 +51,12 @@ workflow you drive:
    credentials are already held, which will be generated, which the person
    must go and get (with the steps), and which are created at provisioning.
 3. For anything to acquire, give the person the printed steps and the exact
-   terminal command to store it: `loftline vault set <name>`. Never ask for
-   the value in the conversation and never accept one if offered.
+   terminal command to store it, which the plan report prints beside each
+   item: `loftline vault set <credential name>`, for example
+   `loftline vault set apple_team_id`. The argument is the credential's name,
+   never its vault path (`loftline/apple/team_id` is a path, not a name).
+   Never ask for the value in the conversation and never accept one if
+   offered.
 4. Call new to render the project, then secrets_write to put its credentials
    where CI reads them. Neither returns a value.
 
