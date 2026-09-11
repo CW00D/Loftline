@@ -231,6 +231,58 @@ def test_the_package_name_reaches_the_app_identifiers(full: Path) -> None:
     assert '"name": "demo-app"' in package
 
 
+# --- infrastructure ----------------------------------------------------------
+
+
+def test_the_infra_root_module_is_rendered(minimal: Path) -> None:
+    for expected in [
+        "infra/main.tf",
+        "infra/variables.tf",
+        "infra/terraform.tfvars",
+        "infra/backend.tf.example",
+        "infra/.gitignore",
+    ]:
+        assert (minimal / expected).is_file(), expected
+
+
+def test_tfvars_carry_the_project_name_and_no_owner(minimal: Path) -> None:
+    """The owner comes from the token; the spec has no owner question."""
+    tfvars = (minimal / "infra/terraform.tfvars").read_text(encoding="utf-8")
+
+    assert 'repository   = "plainapi"' in tfvars
+    assert "owner" not in tfvars
+
+
+def test_the_root_module_references_loftline_by_source_not_by_copy(
+    minimal: Path,
+) -> None:
+    main = (minimal / "infra/main.tf").read_text(encoding="utf-8")
+
+    assert "//infra/github-project" in main
+    assert not (minimal / "infra/github-project").exists()
+
+
+def test_prod_waits_for_the_ci_job_names_that_exist(minimal: Path) -> None:
+    """The protection rule names CI jobs; they must be the jobs ci.yml defines."""
+    import yaml
+
+    workflow = yaml.safe_load(
+        (minimal / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    variables = (minimal / "infra/variables.tf").read_text(encoding="utf-8")
+
+    for job in ("api", "secrets"):
+        assert job in workflow["jobs"]
+        assert f'"{job}"' in variables
+
+
+def test_terraform_state_is_never_tracked(minimal: Path) -> None:
+    ignored = (minimal / "infra/.gitignore").read_text(encoding="utf-8")
+
+    for pattern in ("*.tfstate", ".terraform/", "backend.tf"):
+        assert pattern in ignored
+
+
 # --- refusals ----------------------------------------------------------------
 
 

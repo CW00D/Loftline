@@ -10,6 +10,20 @@ _min_copier_version: "9.0.0"
 _subdirectory: template
 _templates_suffix: .jinja
 _answers_file: .copier-answers.yml
+# Setting _exclude replaces Copier's defaults, so they are repeated here.
+# Tooling caches are the addition: a lint run inside template/ must never
+# reach a generated project.
+_exclude:
+  - "copier.yml"
+  - "~*"
+  - "*.py[co]"
+  - "__pycache__"
+  - ".git"
+  - ".DS_Store"
+  - ".svn"
+  - ".ruff_cache"
+  - ".pytest_cache"
+  - ".mypy_cache"
 
 project_name:
   type: str

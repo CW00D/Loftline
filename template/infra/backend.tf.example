@@ -1,0 +1,29 @@
+# Remote state in a private Cloudflare R2 bucket, with locking. Copy to
+# backend.tf, fill in the account id, then `terraform init -migrate-state`.
+#
+# Credentials come from the environment, never from this file:
+#   AWS_ACCESS_KEY_ID      an R2 access key id with read and write on the bucket
+#   AWS_SECRET_ACCESS_KEY  its secret
+#
+# The bucket is shared across projects; the key is per project. use_lockfile
+# needs Terraform 1.10 or later and a store that honours conditional writes,
+# which R2 does.
+
+terraform {
+  backend "s3" {
+    bucket = "loftline-terraform-state"
+    key    = "REPOSITORY_NAME/github.tfstate"
+    region = "auto"
+
+    endpoints = {
+      s3 = "https://ACCOUNT_ID.r2.cloudflarestorage.com"
+    }
+
+    use_lockfile                = true
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+    skip_s3_checksum            = true
+  }
+}

@@ -1,0 +1,10 @@
+# Terraform working files and state. State is treated as sensitive regardless
+# of what is in it (Loftline credential invariant 5). backend.tf carries an
+# account id and is per machine; the .example beside it is the tracked one.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+backend.tf
