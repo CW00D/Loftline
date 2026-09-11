@@ -841,3 +841,54 @@ against hosting the MCP server, which had been the assumed product shape.
 - The Terraform module referenced by generated projects lives in a private
   repository. Before any non-collaborator uses Loftline it must be published
   somewhere readable, since there is nothing secret in it.
+
+---
+
+## ADR-021: Hosting provisioning
+
+**Status:** Accepted. Verification deferred.
+
+**Context.** Step 8 makes the deferred credentials real and puts an
+environment on a live URL. The roadmap's cheap route holds: Render creates
+the services from the repository's blueprint, connected once by hand, and
+Loftline does the rest through Render's and Aura's APIs. Both APIs were
+probed read-only with the stored keys before anything was designed.
+
+**Decision.**
+
+1. **Per environment, in order:** find the Render service by the blueprint's
+   name; create or find the Aura instance named `<project>-<environment>`;
+   write every credential the environment needs, held, derived and produced,
+   to the Render service's environment and to the GitHub environment;
+   trigger a deploy; check `/health`. All services are looked up before
+   anything is created, so a missing blueprint connection fails with nothing
+   half done.
+2. **The Render service is the readable record.** GitHub secrets cannot be
+   read back; Render environment variables can. A derived value already on
+   the service is reused and re-written to GitHub so the two agree; an Aura
+   instance that already exists is reused only if the service still holds
+   its password, since Aura shows it exactly once, and is otherwise refused
+   with the reason.
+3. **Vendor refusals pass through verbatim.** Aura's free tier permits one
+   instance per account. Loftline does not work around it; it surfaces the
+   refusal and lets the person choose environments, a paid type, or another
+   account. `--environment` and `--aura-type` exist for that choice.
+4. **The provisioner depends on protocols, not clients.** `RenderLike` and
+   `AuraLike` name the handful of operations used, so the orchestration is
+   tested against fakes and either vendor can be swapped without touching it.
+5. **Live verification is deferred.** The one Aura account available holds
+   its single free instance for another product. The provisioner is
+   verified against fakes and both clients against recorded API shapes;
+   the first real run waits for a relational template branch and a Render
+   Postgres, which is the next template work.
+
+**Consequences.**
+
+- The Step 8 gate, a live URL from no console interaction beyond the
+  blueprint connection, is not yet met. It is met by the Postgres branch.
+- Postgres on Render becomes the default database path for new projects:
+  created from the blueprint, no second vendor, no per-account instance
+  limit. Aura remains the graph option.
+- A project with two hosted environments needs two databases. On any free
+  tier that is one too many, and the provisioner says so rather than
+  sharing one.
