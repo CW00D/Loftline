@@ -61,7 +61,7 @@ than copied by generated projects.
 
 ## ADR-003: Trunk plus environments, not long-lived branches
 
-**Status:** Accepted
+**Status:** Reversed by ADR-013. Retained for the reasoning.
 
 **Context.** The original conception was long-lived `dev`, `staging` and `prod`
 branches with hosting linked per branch.
@@ -393,52 +393,3 @@ CLI. Exposed to a model: `list_features`, `validate_spec`, `plan(spec)`, and
 - Building this before Step 5 means designing a tool surface for an engine
   whose shape is still being discovered, and doing the interface work twice.
 
----
-
-## ADR-014: If a hosted vault is ever built, the server holds ciphertext only
-
-**Status:** Accepted in principle. Out of scope until the CLI has a user who is
-not the author.
-
-**Context.** A hosted product with accounts would give sync across devices,
-team sharing, recovery from a lost laptop, and onboarding for someone with no
-existing vault. These are real and a purely client-side design cannot provide
-them. The tempting implementation is server-side custody of values, by analogy
-with GitHub environment secrets.
-
-**Decision.** Accounts are acceptable. Server-side custody of plaintext, or of
-decryption keys, is not. The server holds ciphertext; the client holds a key
-derived from a passphrase that never leaves the device.
-
-**Consequences.**
-
-- The GitHub analogy does not transfer. GitHub holds secrets as a side effect
-  of a product users already trust with source code, backed by HSMs and a large
-  security organisation. Loftline would be asking for production credentials as
-  the first thing it does, before it has done anything for the user.
-- A store of hosting, DNS, database and app store credentials across many small
-  companies is a higher-value target than most of the accounts it protects.
-  Tooling vendors are attacked for exactly this reason.
-- Holding plaintext or keys would require envelope encryption with a managed
-  KMS, per-user data keys, rotation, immutable per-read audit logs, a
-  pre-planned breach disclosure process, a UK GDPR processor agreement with
-  every customer carrying a 72-hour notification duty, and professional
-  indemnity plus cyber insurance. It also creates an obligation that outlives
-  enthusiasm for the project: a vault users depend on cannot be abandoned.
-- Holding ciphertext removes nearly all of that. A breach yields useless blobs.
-- The inverted split, server holds the key and client holds the ciphertext, is
-  rejected explicitly. The key must reach the client at generation time
-  regardless, so the property is not preserved; it centralises the one item
-  that unlocks everything; it still requires the full account system; and it
-  delivers no sync, since the vault remains on a single machine.
-- Cost of the correct design: no server-side processing of secret values. No
-  validating a key against a vendor, no inspecting a token for expiry. The
-  resolver already operates on path indexes and timestamps rather than values,
-  so nothing currently designed is lost.
-- Optional recovery escrow is the one legitimate exception. A recovery key,
-  itself encrypted under a user-held passphrase, can be returned but not used.
-  This addresses the sharpest edge in ADR-011, which is that losing the age key
-  destroys a vault irrecoverably.
-- Bring-your-own-vault remains the default regardless. The ADR-010 adapter
-  boundary makes it nearly free: `op` for 1Password users, their own tooling
-  for Infisical or Doppler users, SOPS for everyone else.
