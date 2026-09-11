@@ -548,3 +548,99 @@ overlay, does not re-decide them.
 - The skeleton's own tooling (`ruff`, `pytest`) is configured inside
   `template/api`, and `template/` is excluded from Loftline's. The two are
   different projects with different rules.
+
+---
+
+## ADR-015: Product direction, and what it changes
+
+**Status:** Accepted
+
+**Context.** Loftline began as a personal scaffolder. The intended product is
+an MCP server with accounts: Claude elicits a project's requirements, writes
+the spec, and Loftline generates a repository whose optional features are
+already wired, so that later work adds a payment method rather than a payment
+integration. Where credentials are needed, Loftline reuses what is held or
+guides the acquisition. ADR-001 already places the LLM at the spec and
+nowhere else; this record captures what the product goal changes.
+
+**Decision.**
+
+1. **The MCP is a thin layer over the CLI.** Each tool is a command. The
+   elicitation is a prompt plus the spec schema. It is built after the CLI
+   works end to end for one user, because the deterministic parts are what a
+   hosted product gets wrong and they are cheapest to fix while the only user
+   is the author.
+2. **"Needed twice" is replaced.** An overlay is built when a real project
+   first needs it, through that project, so it is validated by a deployment.
+   Every overlay ships with its own tests and a deploy check, as the base
+   does. The old rule was written for a personal tool, where a speculative
+   feature is pure maintenance; for a product whose value is preloaded
+   building blocks, the overlays are the point.
+3. **Accounts come last.** They reverse two recorded positions: the README's
+   non-goal of hosting anything, and ADR-011's local vault. A hosted service
+   that holds other people's vendor credentials is a custodian, and a breach
+   is everyone's keys at once. The security posture is written down before
+   the first stranger's key is stored, and nothing before that step depends
+   on it happening.
+
+**Consequences.**
+
+- The spec grows one question per overlay. ADR-001's requirement that the
+  schema be versioned becomes load-bearing.
+- The order of work is roadmap Steps 4, 5, 7 and 8, then the MCP wrapper,
+  then overlays as projects demand them, then accounts.
+
+---
+
+## ADR-016: How the template is parameterised and how overlays attach
+
+**Status:** Accepted
+
+**Context.** Step 4 turned the skeleton into a Copier template with the five
+questions and two overlays, `mobile` and `notifications`. Doing so under the
+hard invariants forced several structural decisions.
+
+**Decision.**
+
+1. **Rendering is opt-in per file.** Only files that carry the project name
+   have the `.jinja` suffix: the README, the compose file, the Render
+   blueprint, the API title and the email sender name, plus the app's
+   identifiers. Everything else is copied byte for byte. Development
+   fixtures that used to carry the placeholder, the local database password
+   and the seeded user, are now fixed values (`localdev`, `dev@example.test`)
+   rather than per-project ones, so those files need no rendering at all.
+2. **Backend overlays attach by file discovery.** `main.py` includes every
+   module in `api/routers/` that defines `router`. An overlay adds a router
+   by adding a file; the shared `main.py` never changes. This is what makes
+   invariant 6 hold for endpoints.
+3. **The app does not know which overlays exist.** Push registration is part
+   of the base app and is best-effort: a project without the notifications
+   overlay answers 404 to `POST /me/push-token`, which the app swallows like
+   any other failure. The alternative, conditional imports and dependencies
+   in the app, is a conditional block in a shared file and is what invariant 6
+   forbids. Feature detection at runtime keeps the app one artefact.
+4. **Overlay configuration is not declared in shared files.** The Render
+   blueprint lists only the base's variables; an overlay's are written by the
+   secret writer to the service directly. An overlay documents its own
+   variables in the docstring of the module it adds.
+5. **`database: postgres` is refused at generation** with a message naming
+   ADR-014, rather than rendered from the graph branch. The Spec model still
+   accepts it, because the resolver can plan a project the template cannot
+   yet render.
+6. **`package_name` reaches only the mobile identifiers** (`com.<package>`).
+   The API is a flat directory of modules and has no package to name. The
+   question is kept because the spec, the roadmap and the mobile overlay all
+   use it.
+7. **The mobile overlay builds but does not submit.** The staging workflow
+   runs `eas build` for iOS and stops. Store submission, and the Apple
+   credentials it needs, are Step 9.
+
+**Consequences.**
+
+- Generation is tested by rendering the working tree, which Copier does
+  including uncommitted changes. `loftline new` renders from the same place.
+- The mobile app's dependency on `expo-notifications` is unconditional. The
+  cost is one native module in every build; the benefit is that enabling
+  notifications changes nothing in the app.
+- A second hosting provider or database is a new question, a new conditional
+  path, and a schema version, never a conditional block.
