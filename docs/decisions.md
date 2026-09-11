@@ -691,3 +691,58 @@ its shape is mostly about what it refuses to do.
 - The CI secrets job means a freshly generated project's `staging` and
   `prod` branches are red until `loftline secrets write` has run for it. The
   `dev` branch is unaffected.
+
+---
+
+## ADR-018: GitHub provisioning
+
+**Status:** Accepted
+
+**Context.** Step 7 makes a project's repository, branches, environments and
+protection reproducible from one Terraform apply. The roadmap fixes the
+shape: a module in `infra/`, consumed by a thin root module in generated
+projects, applied by hand. The decisions below are the ones it left open.
+
+**Decision.**
+
+1. **The owner is the token's owner.** The spec has no owner question and
+   gains none. The GitHub provider creates the repository under whoever
+   `GITHUB_TOKEN` belongs to; an organisation sets `owner` in the root
+   module's provider block. `gh auth token` supplies the token, so Step 7
+   introduces no credential.
+2. **Terraform makes the first commit; the project is committed on top of
+   it.** GitHub cannot create a branch in an empty repository, so the module
+   initialises the repository, renames the initial branch to `dev`, and
+   branches `staging` and `prod` from it. The generated code is then
+   committed on `dev` with that initial commit as its parent, never
+   force-pushed over it: `staging` and `prod` hold the same commit, and
+   GitHub refuses a pull request between branches with no history in common.
+   That was found the hard way on the gate repository. From then on `staging`
+   and `prod` are reached by pull request only.
+3. **The `prod` gate is branch protection, not environment protection.**
+   `prod` requires a pull request and the named CI checks green on the exact
+   commit, and refuses force pushes and deletion for everyone including
+   admins. Zero approvals are required, because a solo developer cannot
+   approve their own pull request and the requirement that matters is the
+   pull request itself (ADR-013).
+4. **The required check names are the CI job names.** `api` and `secrets`,
+   as `ci.yml` defines them. A test in Loftline holds the two in step.
+5. **State is local for this module, until the R2 bucket exists.** This
+   state holds repository ids and protection rules and nothing secret;
+   invariant 5 still treats it as sensitive, so it is gitignored and the
+   R2 backend is one file copy away (`backend.tf.example`, with locking via
+   `use_lockfile`). Other modules, Step 8's in particular, may hold produced
+   credentials in state and must not start life local.
+6. **The module is referenced at `ref=main`.** Tagging begins the first time
+   the module changes after a downstream project exists; until then a tag
+   would pin nothing anyone depends on.
+
+**Consequences.**
+
+- The gate, a repository and its environments existing entirely from
+  `terraform apply`, is exercised on a fresh repository, not by importing
+  `loftline-skeleton`, which was made by hand before this module existed.
+- `terraform apply` is run by hand from the generated project's `infra/`
+  directory, as the roadmap says. Wrapping it is a later convenience.
+- `prevent_destroy` on the repository means `terraform destroy` refuses;
+  deleting a product's repository is a deliberate act in GitHub.
