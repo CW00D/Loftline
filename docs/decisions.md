@@ -786,3 +786,58 @@ already works; Step 8 adds one tool later.
   `sops` and no `gh`, and assert the negative space: no parameter named for
   a secret, no value in any result.
 - When Step 8 lands it adds a `provision` tool with the same shape.
+
+---
+
+## ADR-020: Distribution and the product model
+
+**Status:** Accepted. Settles the questions ADR-015 deferred.
+
+**Context.** Three questions arrived together: how friends get Loftline, how
+the source is protected, and how the work is paid for. They were considered
+against hosting the MCP server, which had been the assumed product shape.
+
+**Decision.**
+
+1. **Loftline is a local tool, distributed as a download.** Every operation
+   that touches a credential value runs on the user's machine with the
+   user's own credentials: their age key, their `gh` login, their vendor
+   keys from their own vault. Nothing Loftline runs holds anyone else's
+   credentials. The hosted MCP is dropped: once the value-touching parts are
+   local, a server would hold nothing but the source, and would cost money
+   and an authentication layer to do it.
+2. **The source is not protected technically, and is not the asset.** A
+   downloaded Python program is readable, and compiling it only makes it
+   inconvenient to read. What is hard to copy is what accumulates: the
+   descriptors, the overlays proven on deployments, the decision records,
+   and the continued work. A copy is a snapshot that stops improving. A
+   source-available licence permitting use and forbidding redistribution
+   and commercial use states the terms; it is a legal instrument, not a
+   lock, and it closes the README's open question at the point of first
+   sharing.
+3. **Membership sells the stream of updates.** Sign-up on a website issues
+   a signed licence key with an expiry. The local tool verifies it offline
+   and phones home for exactly one thing, `loftline update`, which serves a
+   newer version only to an active key. A lapsed member keeps what they
+   have; they stop receiving improvements. A pirated copy is a frozen copy.
+   The check in the tool can be patched out; the server that serves updates
+   cannot, and it is the only thing that matters.
+4. **The website is a Loftline project.** It needs auth, payments and a
+   hosted backend, so it is generated from the template and deployed with
+   Loftline, and it is the first real project to need a payments overlay,
+   which is therefore built through it rather than speculatively.
+5. **Nothing on the server holds a user's credentials, ever.** The server
+   knows who paid and until when. That is the entire custodial surface.
+
+**Consequences.**
+
+- The order of work is: Step 8 (deploy, because the website needs hosting),
+  the website with the payments overlay, `loftline update` and a release
+  pipeline, then the licence text.
+- Step 8 stays a local operation using the user's own Render and Aura keys.
+  It does not become a server-side tool.
+- Friends are onboarded now by collaborator access to the repository and
+  `docs/setup.md`; the download and membership replace that when they exist.
+- The Terraform module referenced by generated projects lives in a private
+  repository. Before any non-collaborator uses Loftline it must be published
+  somewhere readable, since there is nothing secret in it.
