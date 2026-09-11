@@ -18,6 +18,7 @@ from typing import Annotated, NoReturn
 
 import typer
 
+from .bootstrap import init_vault, mcp_config
 from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
 from .generate import generate
@@ -42,6 +43,8 @@ secrets_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(secrets_app, name="secrets")
+mcp_app = typer.Typer(help="Loftline as tools inside Claude.", no_args_is_help=True)
+app.add_typer(mcp_app, name="mcp")
 
 VaultOption = Annotated[
     Path | None,
@@ -101,6 +104,36 @@ def vault_list(vault: VaultOption = None) -> None:
     typer.echo(
         f"\n{len(paths)} path(s) in {config.vault_path}. No value was decrypted."
     )
+
+
+@vault_app.command("init")
+def vault_init(
+    directory: Annotated[Path, typer.Argument(help="Where to create the vault.")],
+    recipient: Annotated[
+        list[str],
+        typer.Option(
+            "--recipient",
+            help="An age public key (age1...). Pass twice: this machine and a backup.",
+        ),
+    ],
+) -> None:
+    """Create an encrypted, empty vault and initialise git in it.
+
+    Writes the SOPS configuration, an empty vault encrypted to the given
+    recipients, and a .gitignore that keeps key material out.
+    """
+    try:
+        vault = init_vault(directory, recipient)
+    except LoftlineError as exc:
+        _fail(str(exc))
+
+    typer.echo(f"Created {vault}, encrypted to {len(recipient)} recipients.")
+    typer.echo("Next:")
+    typer.echo(f"  set LOFTLINE_VAULT={vault.resolve()} permanently")
+    typer.echo(
+        "  create an empty private GitHub repository and push this directory to it"
+    )
+    typer.echo("  loftline doctor")
 
 
 @vault_app.command("set")
@@ -303,6 +336,27 @@ def secrets_write(
     typer.echo(
         "No value was printed. Push the deploying branch to see CI consume them."
     )
+
+
+@mcp_app.command("config")
+def mcp_config_command(
+    desktop: Annotated[
+        bool,
+        typer.Option(
+            "--desktop", help="For Claude Desktop's claude_desktop_config.json."
+        ),
+    ] = False,
+    code: Annotated[
+        bool, typer.Option("--code", help="For Claude Code's .mcp.json.")
+    ] = False,
+) -> None:
+    """Print the MCP server entry for a Claude client, with this machine's paths."""
+    if desktop == code:
+        _fail("Pass exactly one of --desktop or --code.")
+    try:
+        typer.echo(mcp_config("desktop" if desktop else "code"))
+    except LoftlineError as exc:
+        _fail(str(exc))
 
 
 if __name__ == "__main__":  # pragma: no cover

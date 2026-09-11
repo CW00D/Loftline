@@ -91,6 +91,12 @@ Loftline does **not**:
 - Support a matrix of stack permutations. See `docs/decisions.md`, ADR-004.
 - Generate application logic. It generates the substrate the logic sits on.
 
+## Setting it up
+
+See `docs/setup.md`: tools, an encryption key and its backup, a vault,
+your first credentials, and Loftline as tools inside Claude. About half an
+hour on a new machine.
+
 ## Repository layout
 
 ```
