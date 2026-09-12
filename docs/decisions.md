@@ -1042,3 +1042,54 @@ to differ between branches.
 - `hosting.database` (ADR-022 point 5) is still not a question: the
   database's host follows the database, Render for Postgres and Aura for
   Aura.
+
+---
+
+## ADR-024: The web overlay
+
+**Status:** Accepted
+
+**Context.** UniSoc's website is a Vite and React single-page app on Vercel:
+a marketing site, an auth flow against the API, and a large logged-in
+product area. The `web` question (ADR-022) needed files behind it.
+
+**Decision.**
+
+1. **The overlay is the site's skeleton, extracted the way ADR-014
+   extracted the backend.** What remains: Vite, React, React Router, the
+   auth context, a protected route, and one page per auth endpoint the
+   base API has (log in, sign up, forgot and reset password, account with
+   password change, log out and delete), plus a landing page that says to
+   replace it. Every product page, PostHog, Framer Motion, Recharts,
+   Helmet, Stripe and the Vercel headers file were left behind; Stripe
+   returns with the payments family.
+2. **The site's API client is the mobile app's, ported.** Same timeout,
+   same error wording, same 401 handling, same field-level 422 and 409
+   mapping, with the token in localStorage instead of the secure store.
+   The two front-ends are one contract seen from two places.
+3. **The base API gains `CORS_ORIGINS`.** A browser cannot call the API
+   from another origin without it, and invariant 6 forbids the overlay
+   adding middleware to the shared `main.py`. So the base always installs
+   the middleware, reading a comma-separated list that is empty by
+   default. The compose file and `.env.example` allow the Vite dev
+   server; the blueprint sets the hosted site's URL when the site is on
+   Render.
+4. **Hosted, the site is a Render static site per deploying branch,** in
+   the blueprint under the ADR-023 exception for that file. Render builds
+   it from `web/` on push; `VITE_API_URL` is baked in at that build and
+   names the API service beside it; every path is rewritten to
+   `index.html` so the client-side router owns the URL space.
+5. **The site has its own workflow,** `web.yml`, which lints and builds on
+   changes under `web/`. It is a separate conditional path, so the API's
+   workflow is untouched and the `prod` protection rule still names only
+   the API's jobs.
+
+**Consequences.**
+
+- `hosting.web: vercel` is still refused at generation; the files for it
+  are a `vercel.json` and a workflow, when a project needs it.
+- The site has no tests of its own beyond lint and build, as the mobile
+  app has none beyond `expo-doctor`. The contract they both consume is
+  tested in `api/tests/test_api.py`.
+- Render names services after the blueprint entry; if a name is taken
+  across Render, the generated URLs in the blueprint need editing by hand.

@@ -63,6 +63,10 @@ services:
         sync: false
       - key: SMTP_PASSWORD
         sync: false
+{%- if web and hosting_web == 'render' %}
+      - key: CORS_ORIGINS
+        value: https://{{ project_name }}-web-staging.onrender.com
+{%- endif %}
 
   - type: web
     name: {{ project_name }}-api-prod
@@ -93,3 +97,41 @@ services:
         sync: false
       - key: SMTP_PASSWORD
         sync: false
+{%- if web and hosting_web == 'render' %}
+      - key: CORS_ORIGINS
+        value: https://{{ project_name }}-web-prod.onrender.com
+
+  # The web front-end, a static site per deploying branch. Render builds it
+  # from web/ on every push to the branch; VITE_API_URL is baked into the
+  # bundle at that build and names the API service beside it. Every path is
+  # rewritten to index.html so the client-side router owns the URL space.
+  - type: web
+    name: {{ project_name }}-web-staging
+    runtime: static
+    branch: staging
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://{{ project_name }}-api-staging.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  - type: web
+    name: {{ project_name }}-web-prod
+    runtime: static
+    branch: prod
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://{{ project_name }}-api-prod.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+{%- endif %}

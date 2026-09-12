@@ -41,7 +41,7 @@ def minimal(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(scope="module")
 def full(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A project with both overlays."""
+    """A project with every overlay."""
     dest = tmp_path_factory.mktemp("full") / "demo-app"
     return generate(
         spec(
@@ -49,6 +49,7 @@ def full(tmp_path_factory: pytest.TempPathFactory) -> Path:
             package_name="demo_app",
             database="aura",
             mobile=True,
+            web=True,
             notifications=True,
         ),
         dest,
@@ -197,6 +198,8 @@ def test_workflows_are_copied_byte_for_byte(
 
     eas = next(WORKFLOWS.glob("*eas-build-staging.yml*")).read_bytes()
     assert (full / ".github/workflows/eas-build-staging.yml").read_bytes() == eas
+    web = next(WORKFLOWS.glob("*web.yml*")).read_bytes()
+    assert (full / ".github/workflows/web.yml").read_bytes() == web
 
 
 # --- overlays are conditional paths (invariant 6) ----------------------------
@@ -204,6 +207,8 @@ def test_workflows_are_copied_byte_for_byte(
 
 def test_overlays_are_absent_when_off(minimal: Path) -> None:
     assert not (minimal / "app").exists()
+    assert not (minimal / "web").exists()
+    assert not (minimal / ".github/workflows/web.yml").exists()
     assert not (minimal / "api/push.py").exists()
     assert not (minimal / "api/routers/push_tokens.py").exists()
     assert not (minimal / "api/tests/test_push.py").exists()
@@ -222,6 +227,13 @@ def test_overlays_are_present_when_on(full: Path) -> None:
         "api/routers/push_tokens.py",
         "api/tests/test_push.py",
         ".github/workflows/eas-build-staging.yml",
+        "web/package.json",
+        "web/index.html",
+        "web/vite.config.js",
+        "web/src/App.jsx",
+        "web/src/pages/Login.jsx",
+        "web/.env.example",
+        ".github/workflows/web.yml",
     ]:
         assert (full / expected).is_file(), expected
 
@@ -406,6 +418,50 @@ def test_the_blueprint_creates_a_render_postgres_per_environment(
         "property": "connectionString",
     }
     assert not any(v["key"].startswith("NEO4J") for v in staging["envVars"])
+
+
+def test_the_web_overlay_adds_static_sites_and_tells_the_api(full: Path) -> None:
+    """ADR-024: a static site per environment, the API's CORS pointed at it."""
+    blueprint = yaml.safe_load((full / "render.yaml").read_text(encoding="utf-8"))
+    by_name = {s["name"]: s for s in blueprint["services"]}
+
+    assert set(by_name) == {
+        "demo-app-api-staging",
+        "demo-app-api-prod",
+        "demo-app-web-staging",
+        "demo-app-web-prod",
+    }
+    web = by_name["demo-app-web-prod"]
+    assert web["runtime"] == "static"
+    assert web["rootDir"] == "web"
+    assert web["routes"] == [
+        {"type": "rewrite", "source": "/*", "destination": "/index.html"}
+    ]
+    api_url = next(v for v in web["envVars"] if v["key"] == "VITE_API_URL")
+    assert api_url["value"] == "https://demo-app-api-prod.onrender.com"
+    cors = next(
+        v for v in by_name["demo-app-api-prod"]["envVars"] if v["key"] == "CORS_ORIGINS"
+    )
+    assert cors["value"] == "https://demo-app-web-prod.onrender.com"
+
+
+def test_without_web_the_blueprint_has_no_site_and_no_cors(minimal: Path) -> None:
+    blueprint = yaml.safe_load((minimal / "render.yaml").read_text(encoding="utf-8"))
+
+    assert [s["name"] for s in blueprint["services"]] == [
+        "plainapi-api-staging",
+        "plainapi-api-prod",
+    ]
+    keys = {v["key"] for v in blueprint["services"][0]["envVars"]}
+    assert "CORS_ORIGINS" not in keys
+
+
+def test_the_project_name_reaches_the_web_manifest_and_title(full: Path) -> None:
+    package = (full / "web/package.json").read_text(encoding="utf-8")
+    html = (full / "web/index.html").read_text(encoding="utf-8")
+
+    assert '"name": "demo-app-web"' in package
+    assert "<title>demo-app</title>" in html
 
 
 def test_the_aura_blueprint_creates_no_database(minimal: Path) -> None:

@@ -1,0 +1,410 @@
+/* ===========================
+   Root + variables
+=========================== */
+
+:root {
+  --container-pad: clamp(16px, 4vw, 32px);
+  --color-brand: #177439;
+  --color-danger: #ff6b6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Inter,
+    Helvetica,
+    Arial,
+    sans-serif;
+  background: #000;
+  color: #fff;
+}
+
+a {
+  color: var(--color-brand);
+}
+
+/* Shown while a stored token is checked against /me on first load. */
+.auth-init-loader {
+  min-height: 100svh;
+  background: #000;
+}
+
+/* ===========================
+   Buttons
+=========================== */
+
+.button {
+  display: inline-block;
+  padding: 12px 22px;
+  background: var(--color-brand);
+  color: #fff;
+  border: 1px solid var(--color-brand);
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.2s ease;
+}
+
+.button:hover {
+  opacity: 0.85;
+}
+
+.button--ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.button--danger {
+  background: transparent;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+/* ===========================
+   Hero (home, not found)
+=========================== */
+
+.hero {
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 48px var(--container-pad);
+  overflow: hidden;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: radial-gradient(circle at 50% 40%, rgba(23, 116, 57, 0.35), transparent 55%);
+  pointer-events: none;
+}
+
+.hero__inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.hero__title {
+  font-size: clamp(40px, 8vw, 72px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  margin: 0;
+}
+
+.hero__subtitle {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.hero__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ===========================
+   Auth pages
+=========================== */
+
+.auth-page {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px var(--container-pad);
+}
+
+.auth-back {
+  position: absolute;
+  top: 28px;
+  left: 28px;
+  color: #fff;
+  font-size: 32px;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.auth-page__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  width: 100%;
+}
+
+.auth-card__logo {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #fff;
+  text-decoration: none;
+  display: block;
+  text-align: center;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.auth-card__title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.03em;
+}
+
+.auth-card__subtitle {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.auth-card__error,
+.auth-card__success {
+  font-size: 13px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+
+.auth-card__error {
+  color: var(--color-danger);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.auth-card__success {
+  color: #6bcb77;
+  background: rgba(107, 203, 119, 0.08);
+}
+
+.auth-card__footer {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+  text-align: center;
+}
+
+.auth-card__footer a {
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.auth-card__footer a:hover {
+  text-decoration: underline;
+}
+
+/* ===========================
+   Forms
+=========================== */
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-form__field label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+}
+
+.auth-form__aside {
+  font-size: 12px;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.auth-form__field input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 15px;
+  color: #fff;
+  outline: none;
+  transition: border-color 0.2s ease;
+  font-family: inherit;
+}
+
+.auth-form__field input:focus {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.auth-form__field.is-invalid input {
+  border-color: var(--color-danger);
+}
+
+.auth-form__problem {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.auth-form__password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-form__password-wrap input {
+  padding-right: 44px;
+}
+
+.auth-form__eye {
+  position: absolute;
+  right: 12px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-brand);
+  display: flex;
+  align-items: center;
+}
+
+.auth-form__eye:hover {
+  opacity: 0.75;
+}
+
+.auth-form__submit {
+  display: block;
+  margin-top: 4px;
+  padding: 12px;
+  background: var(--color-brand);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  font-family: inherit;
+}
+
+.auth-form__submit:hover {
+  opacity: 0.85;
+}
+
+.auth-form__submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ===========================
+   Account (signed in)
+=========================== */
+
+.account {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 24px var(--container-pad) 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.account__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.account__logo {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #fff;
+  text-decoration: none;
+}
+
+.account__card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.account__card--danger {
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.account__title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.03em;
+}
+
+.account__subtitle {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.account__who {
+  margin: 0;
+  font-size: 18px;
+}
+
+.account__handle,
+.account__email,
+.account__note {
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0;
+  font-size: 14px;
+}

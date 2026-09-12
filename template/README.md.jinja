@@ -81,6 +81,9 @@ refuse to run against a hosted instance.
 
 If the project has an `app/` directory, it is an Expo mobile app that signs
 in against this API; see `app/.env.example` for pointing it at your laptop.
+If it has a `web/` directory, it is a Vite and React site that does the
+same: `cd web && npm install && npm run dev`, with `web/.env` copied from
+`web/.env.example`. Hosted, it is a Render static site beside the API.
 Each optional feature documents its own configuration in the docstring of the
 module it adds.
 
@@ -112,6 +115,7 @@ written there by Loftline. Nothing secret is ever in this repository.
 | `JWT_SECRET` | Signs session tokens. At least 32 bytes; generated per project and per environment. |
 | `SMTP_USER`, `SMTP_PASSWORD` | Sender for password reset codes. Optional locally. |
 | `SMTP_HOST`, `SMTP_PORT` | Default to Gmail on 587 |
+| `CORS_ORIGINS` | Browser origins allowed to call the API, comma separated. Only a web front-end needs it. |
 
 ## Updating from the template
 

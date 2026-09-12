@@ -1,0 +1,52 @@
+# The web front-end's CI. Lints and builds the site on every push to a
+# long-lived branch and on every pull request. Deployment is Render's: a
+# push to staging or prod triggers the static site's own build there.
+#
+# This file is copied into generated projects byte for byte, never rendered:
+# ${{ }} is GitHub's syntax and must not meet a template engine.
+name: Web
+
+on:
+  push:
+    branches: [dev, staging, prod]
+    paths: [web/**, .github/workflows/web.yml]
+  pull_request:
+    paths: [web/**, .github/workflows/web.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        # The URL is baked in at build time. This build is thrown away, so
+        # any value will do; the hosted build reads the real one from the
+        # host's environment.
+        env:
+          VITE_API_URL: http://localhost:8000
+        run: npm run build

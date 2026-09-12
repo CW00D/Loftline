@@ -39,6 +39,8 @@ services:
       NEO4J_PASSWORD: localdev
       # Development only. Loftline generates the real one per project.
       JWT_SECRET: dev-only-not-a-secret-dev-only-not-a-secret
+      # The Vite dev server, if the project has a web front-end.
+      CORS_ORIGINS: http://localhost:5173
     depends_on:
       neo4j:
         condition: service_healthy
