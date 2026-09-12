@@ -78,7 +78,7 @@ class SiteClient:
         return data
 
     def me(self) -> dict[str, Any]:
-        return dict(self._call("GET", "/me"))
+        return dict(self._call("GET", "/sync/me"))
 
     def push_project(
         self,

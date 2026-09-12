@@ -98,7 +98,7 @@ def test_the_client_sends_the_token_and_the_documented_shapes() -> None:
 
 def test_a_refused_token_says_what_to_do() -> None:
     transport = FakeTransport(
-        {("GET", "/me"): (401, {"detail": "Invalid or revoked token"})}
+        {("GET", "/sync/me"): (401, {"detail": "Invalid or revoked token"})}
     )
     client = SiteClient("llt_old", transport=transport)
 
