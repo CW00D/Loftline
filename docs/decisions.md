@@ -1301,3 +1301,8 @@ skipped on the pull request, which GitHub counts as passing.
   generated root modules reference the module by that branch.
 - The gate did its job. Both failures were invisible to the generation
   tests, which render and lint but do not commit or deploy.
+
+Amended the same day: Render allows one free Postgres per account, and
+refuses a second outright, so a project with two environments cannot have
+two free databases. Staging takes the free one; prod is on the smallest
+paid plan. A gate run that must cost nothing provisions staging only.

@@ -18,13 +18,15 @@
 # the one-word change that lifts each:
 #   services   sleep after fifteen idle minutes and take 30 to 60 seconds to
 #              wake; `plan: starter` keeps them always on.
-#   databases  are deleted by Render after their free period unless upgraded;
-#              `plan: basic-256mb` is the smallest paid plan.
+#   databases  Render allows one free database per account, and deletes it
+#              after its free period unless upgraded. Staging takes the free
+#              one; prod is on `basic-256mb`, the smallest paid plan, because
+#              a second free database is refused outright.
 {%- if database == 'postgres' %}
 #
 # The database is created here too, one per environment, and its connection
 # string is handed to the service by Render; DATABASE_URL never passes through
-# anything else. Upgrade prod's plan before it holds data you want to keep.
+# anything else.
 databases:
   - name: {{ project_name }}-db-staging
     plan: free
@@ -32,7 +34,7 @@ databases:
     user: app
 
   - name: {{ project_name }}-db-prod
-    plan: free
+    plan: basic-256mb
     databaseName: app
     user: app
 {%- endif %}
