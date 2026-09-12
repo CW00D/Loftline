@@ -115,7 +115,7 @@ services:
     runtime: static
     branch: staging
     rootDir: web
-    buildCommand: npm ci && npm run build
+    buildCommand: npm install --no-audit --no-fund && npm run build
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
@@ -134,7 +134,7 @@ services:
     runtime: static
     branch: prod
     rootDir: web
-    buildCommand: npm ci && npm run build
+    buildCommand: npm install --no-audit --no-fund && npm run build
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL

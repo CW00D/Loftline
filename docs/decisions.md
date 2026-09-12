@@ -1306,3 +1306,8 @@ Amended the same day: Render allows one free Postgres per account, and
 refuses a second outright, so a project with two environments cannot have
 two free databases. Staging takes the free one; prod is on the smallest
 paid plan. A gate run that must cost nothing provisions staging only.
+
+Amended 2026-09-12 (ADR-024): the site's workflow and Render build use
+`npm install`, not `npm ci`. The template ships no lock file, because the
+dependency list varies with the overlays; a generated project commits its
+own after the first install, and both commands honour it from then on.

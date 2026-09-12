@@ -34,11 +34,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # npm install, not npm ci: the template ships no lock file, because
+        # the dependency list varies with the overlays. The project's own
+        # lock file, once committed, is honoured by both.
+        run: npm install --no-audit --no-fund
 
       - name: Lint
         run: npm run lint
