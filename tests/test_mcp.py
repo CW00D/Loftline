@@ -98,6 +98,7 @@ async def test_the_tools_are_exactly_the_commands_plus_the_views() -> None:
         "plan",
         "new",
         "secrets_write",
+        "sync",
     }
 
 

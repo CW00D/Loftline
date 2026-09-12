@@ -31,6 +31,7 @@ from .provision import provision
 from .report import render_plan
 from .resolve import Derive, Inject, resolve
 from .secrets import GitHubSink, write_secrets
+from .site import DEFAULT_SITE, SiteClient, sync_project
 from .vault_sops import SopsAgeVault
 
 app = typer.Typer(
@@ -491,3 +492,101 @@ def mcp_config_command(
 
 if __name__ == "__main__":  # pragma: no cover
     app()
+
+
+SiteOption = Annotated[
+    str,
+    typer.Option(
+        "--site",
+        envvar="LOFTLINE_SITE",
+        help="The dashboard's API. Defaults to the Loftline site.",
+    ),
+]
+
+
+@app.command()
+def login(
+    vault: VaultOption = None,
+    credentials: CredentialsOption = Path("credentials.yml"),
+    site: SiteOption = DEFAULT_SITE,
+) -> None:
+    """Store a dashboard token in the vault and check it works.
+
+    Create the token on the dashboard's Settings page; it is shown once.
+    The value is taken from a hidden prompt and never echoed.
+    """
+    config = VaultConfig.from_env(vault)
+    try:
+        require(config, Capability.WRITE)
+        assert config.vault_path is not None
+        descriptor = load_descriptors(credentials)["loftline_site_token"]
+        assert descriptor.vault_path is not None
+        value = _read_value("loftline_site_token", False)
+        me = SiteClient(value, site=site).me()
+        store = SopsAgeVault(config.vault_path)
+        store.set(descriptor.vault_path, value)
+    except LoftlineError as exc:
+        _fail(str(exc))
+    except KeyError:
+        _fail("credentials.yml has no loftline_site_token descriptor.")
+    typer.echo(f"Signed in to {site} as {me.get('name')} (@{me.get('handle')}).")
+    typer.echo(
+        f"{config.vault_path.name} has changed. Commit and push the vault repository."
+    )
+
+
+@app.command()
+def sync(
+    spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
+    repo: Annotated[
+        str | None, typer.Option("--repo", help="GitHub repository as OWNER/NAME.")
+    ] = None,
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            "--project",
+            help="The generated project's directory, whose infra/terraform.tfvars "
+            "receives the collaborators. Default: none written.",
+        ),
+    ] = None,
+    org: Annotated[
+        str | None,
+        typer.Option(
+            "--org", help="Dashboard organisation slug the project belongs to."
+        ),
+    ] = None,
+    vault: VaultOption = None,
+    credentials: CredentialsOption = Path("credentials.yml"),
+    site: SiteOption = DEFAULT_SITE,
+) -> None:
+    """Push the project's spec and live status to the dashboard, and pull the
+    collaborators the team asked for into the project's Terraform variables.
+
+    Nothing here touches GitHub with a credential: the collaborators are
+    written for `terraform apply`, and confirmed against the repository
+    through `gh` afterwards.
+    """
+    config = VaultConfig.from_env(vault)
+    try:
+        require(config, Capability.DECRYPT)
+        assert config.vault_path is not None
+        descriptor = load_descriptors(credentials)["loftline_site_token"]
+        assert descriptor.vault_path is not None
+        store = SopsAgeVault(config.vault_path)
+        client = SiteClient(store.get(descriptor.vault_path), site=site)
+        report = sync_project(
+            load_spec(spec), client, repository=repo, project_dir=project, org_slug=org
+        )
+    except LoftlineError as exc:
+        _fail(str(exc))
+    except KeyError:
+        _fail("credentials.yml has no loftline_site_token descriptor.")
+    typer.echo(f"Synced {report.project} with {site}")
+    for name, healthy in report.environments:
+        typer.echo(f"  {name:11} {'healthy' if healthy else 'UNHEALTHY'}")
+    if report.wanted:
+        typer.echo(f"  collaborators wanted   {', '.join(report.wanted)}")
+        typer.echo(f"  on the repository      {', '.join(report.applied) or 'none'}")
+        typer.echo(f"  pending                {', '.join(report.pending) or 'none'}")
+    for note in report.notes:
+        typer.echo(f"  {note}")

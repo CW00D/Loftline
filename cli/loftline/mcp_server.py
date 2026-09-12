@@ -36,6 +36,7 @@ from .models import Spec, load_descriptors
 from .report import render_plan
 from .resolve import resolve
 from .secrets import GitHubSink, write_secrets
+from .site import DEFAULT_SITE, SiteClient, sync_project
 from .vault_sops import SopsAgeVault
 
 CREDENTIALS_FILE = Path(__file__).resolve().parents[2] / "credentials.yml"
@@ -268,6 +269,47 @@ def secrets_write(
     if report.outstanding:
         lines.append(f"  still to acquire: {', '.join(report.outstanding)}")
     lines.append("No value was returned.")
+    return "\n".join(lines)
+
+
+@server.tool(
+    description=(
+        "Push a project's spec and live health to the Loftline dashboard and pull "
+        "the collaborators the team asked for into its Terraform variables. Needs "
+        "loftline_site_token in the vault (run `loftline login`). Writes nothing to "
+        "GitHub itself; says what `terraform apply` will add."
+    )
+)
+@anticipated
+def sync(
+    spec: str,
+    repo: str | None = None,
+    project_dir: str | None = None,
+    org: str | None = None,
+) -> str:
+    config = _config()
+    require(config, Capability.DECRYPT)
+    descriptors = load_descriptors(CREDENTIALS_FILE)
+    descriptor = descriptors["loftline_site_token"]
+    assert descriptor.vault_path is not None
+    store = _vault(config)
+    client = SiteClient(store.get(descriptor.vault_path), site=DEFAULT_SITE)
+    report = sync_project(
+        _parse_spec(spec),
+        client,
+        repository=repo,
+        project_dir=Path(project_dir) if project_dir else None,
+        org_slug=org,
+    )
+    lines = [f"Synced {report.project}"]
+    lines += [
+        f"  {n}: {'healthy' if h else 'unhealthy'}" for n, h in report.environments
+    ]
+    if report.wanted:
+        lines.append(f"  wanted: {', '.join(report.wanted)}")
+        lines.append(f"  applied: {', '.join(report.applied) or 'none'}")
+        lines.append(f"  pending: {', '.join(report.pending) or 'none'}")
+    lines += [f"  {note}" for note in report.notes]
     return "\n".join(lines)
 
 
