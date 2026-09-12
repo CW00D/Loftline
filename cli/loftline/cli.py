@@ -460,6 +460,11 @@ def provision_command(
             typer.echo(f"  {'':11} {entry.web_service}  deploy {web_deploy}")
         for hostname, status in entry.domains:
             typer.echo(f"  {'':11} https://{hostname}  ({status})")
+        if entry.domains:
+            typer.echo(
+                f"  {'':11} Render issues each name's certificate after verifying it, "
+                "usually within minutes; until then browsers refuse the name."
+            )
     typer.echo("No value was printed.")
 
 
