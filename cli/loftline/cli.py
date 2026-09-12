@@ -212,9 +212,15 @@ def _read_value(name: str, from_stdin: bool) -> str:
         value = raw[:-1] if raw.endswith("\n") else raw
         value = value[:-1] if value.endswith("\r") else value
     else:
+        typer.echo(
+            f"Paste the value for {name} and press Enter. Nothing is echoed while "
+            "you type, not even asterisks."
+        )
         value = str(typer.prompt(f"Value for {name}", hide_input=True, default=""))
     if not value:
         _fail(f"An empty value was given for {name}. Nothing stored.")
+    # Enough to know the paste landed; no part of the value itself (invariant 1).
+    typer.echo(f"Received {len(value)} characters.")
     return value
 
 
