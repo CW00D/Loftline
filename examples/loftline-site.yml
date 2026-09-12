@@ -9,4 +9,5 @@ payments: [subscriptions]
 hosting:
   api: render
   web: render
+domain: loftline.org
 environments: [staging]
