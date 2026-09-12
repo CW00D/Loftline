@@ -32,6 +32,10 @@ yarn-error.*
 .env
 .env*.local
 
+# store credentials, never committed; see eas.json and app.config.js
+google-play-service-account.json
+google-services.json
+
 # generated native folders
 /ios
 /android

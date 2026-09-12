@@ -130,6 +130,7 @@ def test_shipped_mapping_matches_the_documented_table() -> None:
         "apple_team_id",
         "app_store_connect_key",
         "apple_app_specific_password",
+        "google_play_service_account",
     )
     assert features["database.aura"].requires == (
         "aura_client_id",

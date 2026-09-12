@@ -1093,3 +1093,40 @@ product area. The `web` question (ADR-022) needed files behind it.
   tested in `api/tests/test_api.py`.
 - Render names services after the blueprint entry; if a name is taken
   across Render, the generated URLs in the blueprint need editing by hand.
+
+---
+
+## ADR-025: Android in the mobile overlay
+
+**Status:** Accepted
+
+**Context.** The mobile overlay built for iOS only. UniSoc ships to the Play
+Store as well, with an EAS submit profile driven by a Google Play service
+account key and Firebase Cloud Messaging for push.
+
+**Decision.**
+
+1. **The staging workflow builds both platforms.** Two `eas build` steps,
+   one per platform, both `--no-wait`. Submission stays manual (ADR-013);
+   `eas.json` carries the submit profiles so that `eas submit` from a
+   laptop is one command per platform.
+2. **The Play service account key is a credential.** `google_play_service_account`,
+   account scope, manual, the JSON file's contents. The `mobile` feature
+   requires it alongside the Apple credentials. It lives at
+   `app/google-play-service-account.json` only on the machine that submits,
+   and is gitignored.
+3. **Android push is a file, detected at build time.** `app.config.js`
+   sets `googleServicesFile` only if `google-services.json` is present.
+   The file is per Firebase project and is downloaded by hand; the FCM
+   service account key is uploaded once with `eas credentials`, as the
+   Apple credentials are. Without the file the app builds and cannot
+   receive push, which is the notifications overlay degrading rather than
+   the mobile overlay failing.
+
+**Consequences.**
+
+- The Android keystore is generated and held by EAS on the first build,
+  like Apple signing. Nothing about it is in the repository or the vault.
+- Firebase is not a descriptor. It is per project, not per account, and is
+  a file rather than a value; the descriptor model does not fit it and it
+  has been needed once.

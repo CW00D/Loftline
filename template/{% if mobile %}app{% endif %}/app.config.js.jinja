@@ -1,6 +1,16 @@
 // Expo app configuration. The development variant gets its own bundle id so a
 // dev build and the store build can sit on one phone side by side.
+const fs = require("fs");
+
 const IS_DEV = process.env.APP_VARIANT === "development";
+
+// Push on Android goes through Firebase Cloud Messaging. Download
+// google-services.json from the Firebase console into app/ (it is
+// gitignored) and upload the FCM service account key with `eas credentials`;
+// without the file the app still builds and simply cannot receive push.
+const GOOGLE_SERVICES = fs.existsSync("./google-services.json")
+  ? "./google-services.json"
+  : undefined;
 
 const NAME = "{{ project_name }}";
 const BUNDLE_ID = "com.{{ package_name }}";
@@ -27,6 +37,7 @@ export default {
     },
     android: {
       package: IS_DEV ? `${BUNDLE_ID}.dev` : BUNDLE_ID,
+      googleServicesFile: GOOGLE_SERVICES,
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
         backgroundColor: "#1f2937",

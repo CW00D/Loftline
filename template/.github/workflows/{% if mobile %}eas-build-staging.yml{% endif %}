@@ -1,14 +1,19 @@
-# Builds the iOS release candidate whenever the app changes on staging.
+# Builds the iOS and Android release candidates whenever the app changes on
+# staging.
 #
-# ADR-013: for a mobile project the staging branch produces the build that is
-# submitted to the stores, and submission itself stays manual. This workflow
-# builds; it does not submit. Store submission is Step 9 of the roadmap.
+# ADR-013: for a mobile project the staging branch produces the builds that
+# are submitted to the stores, and submission itself stays manual. This
+# workflow builds; it does not submit. From a laptop, once the builds are
+# done: `eas submit --platform ios --profile preview` and
+# `eas submit --platform android --profile preview`, the latter with the
+# Google Play service account key at app/google-play-service-account.json
+# (descriptor: google_play_service_account; never committed).
 #
 # Copied into generated projects byte for byte, never rendered. ${{ }} is
 # GitHub's syntax. Needs one repository secret, written by Loftline:
 #   EXPO_TOKEN   an Expo access token (descriptor: expo_access_token)
-# Apple signing credentials are configured once through `eas credentials`
-# and held by EAS, not by this workflow.
+# Apple signing credentials and the Android keystore are configured once
+# through `eas credentials` and held by EAS, not by this workflow.
 name: EAS build (staging)
 
 on:
@@ -46,5 +51,10 @@ jobs:
 
       - name: Build the iOS release candidate
         run: eas build --platform ios --profile preview --non-interactive --no-wait
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build the Android release candidate
+        run: eas build --platform android --profile preview --non-interactive --no-wait
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

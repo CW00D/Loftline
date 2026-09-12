@@ -27,5 +27,21 @@
         "EXPO_PUBLIC_API_URL": "https://{{ project_name }}-api-prod.onrender.com"
       }
     }
+  },
+  "submit": {
+    "preview": {
+      "ios": {},
+      "android": {
+        "serviceAccountKeyPath": "./google-play-service-account.json",
+        "track": "internal"
+      }
+    },
+    "production": {
+      "ios": {},
+      "android": {
+        "serviceAccountKeyPath": "./google-play-service-account.json",
+        "track": "production"
+      }
+    }
   }
 }
