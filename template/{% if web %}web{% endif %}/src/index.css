@@ -569,6 +569,17 @@ code, .mono {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
+/* Two cards, the second wider and reaching the right edge. */
+.grid--wide {
+  grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
+}
+
+@media (max-width: 720px) {
+  .grid--wide {
+    grid-template-columns: 1fr;
+  }
+}
+
 .card__title {
   font-size: 15px;
   font-weight: 600;
