@@ -1,0 +1,44 @@
+"""The subscriptions module's table.
+
+Overlay: present only when the project enables the subscriptions payment
+module. migrations/versions/0004_subscriptions.py created it;
+migrations/env.py imports this module so autogenerate knows it. tables.py
+never mentions it.
+
+One row per user: the module models a membership, not a basket of
+subscriptions. A user who cancels and later re-subscribes reuses the row and
+the Stripe customer.
+"""
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from tables import Base
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True
+    )
+    stripe_customer_id: Mapped[str] = mapped_column(String(255))
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    plan: Mapped[str] = mapped_column(String(40))
+    # Stripe's own status words: incomplete, active, trialing, past_due,
+    # canceled, unpaid. Strings, so a new one is not a migration.
+    status: Mapped[str] = mapped_column(
+        String(30), default="incomplete", server_default="incomplete"
+    )
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

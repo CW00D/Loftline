@@ -1,0 +1,55 @@
+{%- set previous = "0003" if "checkout" in payments else ("0002" if notifications else "0001") -%}
+"""subscriptions
+
+Revision ID: 0004
+Revises: {{ previous }}
+Create Date: 2026-09-12
+
+The subscriptions payment module's table. Overlay migrations sit in a fixed
+order after the base's, each pointing at the nearest earlier one the project
+has, so the chain is always linear whichever overlays are on (Loftline
+ADR-026).
+"""
+from typing import Sequence, Union
+
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "0004"
+down_revision: Union[str, None] = "{{ previous }}"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        "subscriptions",
+        sa.Column("id", sa.String(length=36), nullable=False),
+        sa.Column("user_id", sa.String(length=36), nullable=False),
+        sa.Column("stripe_customer_id", sa.String(length=255), nullable=False),
+        sa.Column("stripe_subscription_id", sa.String(length=255), nullable=True),
+        sa.Column("plan", sa.String(length=40), nullable=False),
+        sa.Column("status", sa.String(length=30), server_default="incomplete", nullable=False),
+        sa.Column("current_period_end", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("cancel_at_period_end", sa.Boolean(), server_default="false", nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("stripe_subscription_id"),
+        sa.UniqueConstraint("user_id"),
+    )
+
+
+def downgrade() -> None:
+    op.drop_table("subscriptions")

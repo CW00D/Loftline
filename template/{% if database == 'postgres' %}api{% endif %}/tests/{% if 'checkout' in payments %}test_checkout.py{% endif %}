@@ -1,0 +1,148 @@
+"""The checkout module: server-side pricing, an order per attempt, and a
+webhook that fulfils exactly once. Stripe itself is faked; nothing here
+touches the network."""
+import os
+from types import SimpleNamespace
+
+import pytest
+import stripe
+
+from stripe_signing import event, signed_event
+
+SECRET = "whsec_test_checkout"
+
+
+@pytest.fixture(autouse=True)
+def stripe_config(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_not_real")
+    monkeypatch.setenv("STRIPE_CHECKOUT_WEBHOOK_SECRET", SECRET)
+
+
+@pytest.fixture
+def intents(monkeypatch):
+    """Every PaymentIntent the API asked Stripe for, and a fake answer."""
+    created = []
+
+    def fake_create(**kwargs):
+        created.append(kwargs)
+        return SimpleNamespace(id=f"pi_{len(created)}", client_secret=f"pi_{len(created)}_secret")
+
+    monkeypatch.setattr(stripe.PaymentIntent, "create", fake_create)
+    return created
+
+
+def post_webhook(client, type_, intent_id, secret=SECRET):
+    payload, signature = signed_event(
+        event(type_, {"id": intent_id, "object": "payment_intent"}), secret
+    )
+    return client.post(
+        "/checkout/webhook",
+        content=payload,
+        headers={"Stripe-Signature": signature, "Content-Type": "application/json"},
+    )
+
+
+def test_checkout_prices_on_the_server_and_returns_a_client_secret(client, user, intents):
+    response = client.post(
+        "/checkout", json={"item": "example", "quantity": 3}, headers=user["headers"]
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["amount_pence"] == 1500
+    assert body["client_secret"] == "pi_1_secret"
+    assert intents[0]["amount"] == 1500
+    assert intents[0]["metadata"]["order_id"] == body["order_id"]
+
+    orders = client.get("/checkout/orders", headers=user["headers"]).json()
+    assert [o["status"] for o in orders] == ["pending"]
+
+
+def test_an_unknown_item_is_a_400_and_creates_nothing(client, user, intents):
+    response = client.post("/checkout", json={"item": "nope"}, headers=user["headers"])
+
+    assert response.status_code == 400
+    assert intents == []
+    assert client.get("/checkout/orders", headers=user["headers"]).json() == []
+
+
+def test_checkout_needs_a_token(client):
+    assert client.post("/checkout", json={"item": "example"}).status_code == 401
+
+
+def test_without_a_stripe_key_checkout_is_a_503(client, user, monkeypatch):
+    monkeypatch.delenv("STRIPE_SECRET_KEY")
+
+    response = client.post("/checkout", json={"item": "example"}, headers=user["headers"])
+
+    assert response.status_code == 503
+
+
+def test_a_succeeded_webhook_completes_the_order_once(client, user, intents, monkeypatch):
+    import checkout_items
+
+    fulfilled = []
+    monkeypatch.setattr(checkout_items, "fulfil", lambda *args: fulfilled.append(args))
+    # The router bound the name at import; patch where it is looked up.
+    import routers.checkout as checkout_router
+
+    monkeypatch.setattr(checkout_router, "fulfil", lambda *args: fulfilled.append(args))
+    order_id = client.post(
+        "/checkout", json={"item": "example"}, headers=user["headers"]
+    ).json()["order_id"]
+
+    first = post_webhook(client, "payment_intent.succeeded", "pi_1")
+    replay = post_webhook(client, "payment_intent.succeeded", "pi_1")
+
+    assert first.json() == {"ok": True, "handled": True}
+    assert replay.json() == {"ok": True, "handled": False}
+    assert len(fulfilled) == 1
+    assert fulfilled[0][0] == order_id
+    order = client.get(f"/checkout/orders/{order_id}", headers=user["headers"]).json()
+    assert order["status"] == "completed"
+
+
+def test_a_failed_webhook_marks_the_order_failed(client, user, intents):
+    order_id = client.post(
+        "/checkout", json={"item": "example"}, headers=user["headers"]
+    ).json()["order_id"]
+
+    post_webhook(client, "payment_intent.payment_failed", "pi_1")
+
+    order = client.get(f"/checkout/orders/{order_id}", headers=user["headers"]).json()
+    assert order["status"] == "failed"
+
+
+def test_a_badly_signed_webhook_is_refused(client, user, intents):
+    client.post("/checkout", json={"item": "example"}, headers=user["headers"])
+
+    response = post_webhook(client, "payment_intent.succeeded", "pi_1", secret="whsec_wrong")
+
+    assert response.status_code == 400
+    orders = client.get("/checkout/orders", headers=user["headers"]).json()
+    assert orders[0]["status"] == "pending"
+
+
+def test_a_webhook_for_an_unknown_intent_is_acknowledged(client):
+    response = post_webhook(client, "payment_intent.succeeded", "pi_stranger")
+
+    assert response.status_code == 200
+    assert response.json()["handled"] is False
+
+
+def test_orders_are_private(client, user, intents):
+    order_id = client.post(
+        "/checkout", json={"item": "example"}, headers=user["headers"]
+    ).json()["order_id"]
+    other = client.post(
+        "/signup",
+        json={"email": "other@example.test", "password": "another password",
+              "handle": "other", "name": "Other"},
+    ).json()["token"]
+
+    response = client.get(
+        f"/checkout/orders/{order_id}", headers={"Authorization": f"Bearer {other}"}
+    )
+
+    assert response.status_code == 404
+    assert os.environ["STRIPE_CHECKOUT_WEBHOOK_SECRET"] == SECRET

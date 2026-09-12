@@ -1,0 +1,199 @@
+"""The subscriptions module: one membership per user, paid through Stripe
+Billing, kept current by webhook, and gating a members-only dependency.
+Stripe itself is faked; nothing here touches the network."""
+from types import SimpleNamespace
+
+import pytest
+import stripe
+from fastapi import Depends
+
+from stripe_signing import event, signed_event
+
+SECRET = "whsec_test_subscriptions"
+PERIOD_END = 1_900_000_000
+
+
+@pytest.fixture(autouse=True)
+def stripe_config(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_not_real")
+    monkeypatch.setenv("STRIPE_SUBSCRIPTIONS_WEBHOOK_SECRET", SECRET)
+    monkeypatch.setenv("STRIPE_PRICE_STANDARD", "price_standard")
+    import subscription_plans
+
+    monkeypatch.setitem(subscription_plans.PLANS, "standard", "price_standard")
+
+
+@pytest.fixture
+def fake_stripe(monkeypatch):
+    calls = {"customers": [], "subscriptions": [], "modified": []}
+
+    def create_customer(**kwargs):
+        calls["customers"].append(kwargs)
+        return SimpleNamespace(id=f"cus_{len(calls['customers'])}")
+
+    def create_subscription(**kwargs):
+        calls["subscriptions"].append(kwargs)
+        n = len(calls["subscriptions"])
+        return SimpleNamespace(
+            id=f"sub_{n}",
+            status="incomplete",
+            current_period_end=PERIOD_END,
+            latest_invoice=SimpleNamespace(
+                payment_intent=SimpleNamespace(client_secret=f"pi_sub_{n}_secret")
+            ),
+        )
+
+    def modify(subscription_id, **kwargs):
+        calls["modified"].append((subscription_id, kwargs))
+        return SimpleNamespace(id=subscription_id)
+
+    monkeypatch.setattr(stripe.Customer, "create", create_customer)
+    monkeypatch.setattr(stripe.Subscription, "create", create_subscription)
+    monkeypatch.setattr(stripe.Subscription, "modify", modify)
+    return calls
+
+
+def post_webhook(client, type_, obj, secret=SECRET):
+    payload, signature = signed_event(event(type_, obj), secret)
+    return client.post(
+        "/subscriptions/webhook",
+        content=payload,
+        headers={"Stripe-Signature": signature, "Content-Type": "application/json"},
+    )
+
+
+def subscription_object(subscription_id, status, **extra):
+    return {
+        "id": subscription_id,
+        "object": "subscription",
+        "status": status,
+        "current_period_end": PERIOD_END,
+        "cancel_at_period_end": False,
+        **extra,
+    }
+
+
+def test_the_plans_on_offer_are_the_configured_ones(client):
+    assert client.get("/subscriptions/plans").json() == [
+        {"plan": "standard", "price_id": "price_standard"}
+    ]
+
+
+def test_a_new_user_has_no_membership(client, user):
+    assert client.get("/subscriptions/me", headers=user["headers"]).json()["active"] is False
+
+
+def test_subscribing_creates_a_customer_and_an_incomplete_subscription(
+    client, user, fake_stripe
+):
+    response = client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "subscription_id": "sub_1",
+        "client_secret": "pi_sub_1_secret",
+        "status": "incomplete",
+    }
+    assert fake_stripe["customers"][0]["email"] == user["email"]
+    assert fake_stripe["subscriptions"][0]["items"] == [{"price": "price_standard"}]
+    assert fake_stripe["subscriptions"][0]["payment_behavior"] == "default_incomplete"
+    me = client.get("/subscriptions/me", headers=user["headers"]).json()
+    assert me["active"] is False
+    assert me["status"] == "incomplete"
+
+
+def test_an_unknown_plan_is_a_400(client, user, fake_stripe):
+    response = client.post("/subscriptions", json={"plan": "gold"}, headers=user["headers"])
+
+    assert response.status_code == 400
+    assert fake_stripe["customers"] == []
+
+
+def test_the_webhook_turns_the_membership_active_and_members_only_opens(
+    client, user, fake_stripe
+):
+    from main import app
+    from routers.subscriptions import require_active_subscription
+
+    @app.get("/members-only")
+    def members_only(member=Depends(require_active_subscription)):
+        return {"welcome": member.handle}
+
+    client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+    assert client.get("/members-only", headers=user["headers"]).status_code == 402
+
+    response = post_webhook(
+        client, "customer.subscription.updated", subscription_object("sub_1", "active")
+    )
+
+    assert response.json() == {"ok": True, "handled": True}
+    me = client.get("/subscriptions/me", headers=user["headers"]).json()
+    assert me["active"] is True
+    assert me["current_period_end"].startswith("2030-")
+    assert client.get("/members-only", headers=user["headers"]).json() == {"welcome": "dev"}
+
+
+def test_subscribing_twice_while_active_is_a_409(client, user, fake_stripe):
+    client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+    post_webhook(client, "customer.subscription.updated", subscription_object("sub_1", "active"))
+
+    response = client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+
+    assert response.status_code == 409
+    assert len(fake_stripe["subscriptions"]) == 1
+
+
+def test_cancelling_asks_stripe_to_stop_at_period_end(client, user, fake_stripe):
+    client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+    post_webhook(client, "customer.subscription.updated", subscription_object("sub_1", "active"))
+
+    response = client.delete("/subscriptions/me", headers=user["headers"])
+
+    assert response.status_code == 200
+    assert fake_stripe["modified"] == [("sub_1", {"cancel_at_period_end": True})]
+    me = client.get("/subscriptions/me", headers=user["headers"]).json()
+    assert me["active"] is True
+    assert me["cancel_at_period_end"] is True
+
+    post_webhook(client, "customer.subscription.deleted", subscription_object("sub_1", "canceled"))
+    assert client.get("/subscriptions/me", headers=user["headers"]).json()["active"] is False
+
+
+def test_a_failed_invoice_makes_the_membership_past_due(client, user, fake_stripe):
+    client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+    post_webhook(client, "customer.subscription.updated", subscription_object("sub_1", "active"))
+
+    # The 2025 invoice shape: the subscription reference lives under parent.
+    post_webhook(
+        client,
+        "invoice.payment_failed",
+        {"id": "in_1", "object": "invoice",
+         "parent": {"subscription_details": {"subscription": "sub_1"}}},
+    )
+
+    me = client.get("/subscriptions/me", headers=user["headers"]).json()
+    assert me["status"] == "past_due"
+    assert me["active"] is False
+
+
+def test_a_resubscribing_user_reuses_the_stripe_customer(client, user, fake_stripe):
+    client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+    post_webhook(client, "customer.subscription.deleted", subscription_object("sub_1", "canceled"))
+
+    response = client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+
+    assert response.status_code == 200
+    assert len(fake_stripe["customers"]) == 1
+    assert fake_stripe["subscriptions"][1]["customer"] == "cus_1"
+
+
+def test_a_badly_signed_webhook_is_refused(client, user, fake_stripe):
+    client.post("/subscriptions", json={"plan": "standard"}, headers=user["headers"])
+
+    response = post_webhook(
+        client, "customer.subscription.updated", subscription_object("sub_1", "active"),
+        secret="whsec_wrong",
+    )
+
+    assert response.status_code == 400
+    assert client.get("/subscriptions/me", headers=user["headers"]).json()["active"] is False

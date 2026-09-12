@@ -1130,3 +1130,73 @@ account key and Firebase Cloud Messaging for push.
 - Firebase is not a descriptor. It is per project, not per account, and is
   a file rather than a value; the descriptor model does not fit it and it
   has been needed once.
+
+---
+
+## ADR-026: The payments family
+
+**Status:** Accepted
+
+**Context.** UniSoc's payments are a strategy pattern over a unified
+one-off checkout: reserve, price on the server, pay through a Stripe
+PaymentIntent, fulfil by webhook, with Stripe Connect and a cron that
+expires abandoned reservations. The spec's `payments` list (ADR-022) says
+each module is a separately priced overlay, and rolling subscriptions were
+asked for first. Neither existed in the source as a module; subscriptions
+had to be built from Stripe Billing's documented integration.
+
+**Decision.**
+
+1. **Two modules, each a complete overlay:** `payments.checkout` and
+   `payments.subscriptions`. Each is a router, a table, a migration, a
+   product-configuration file, a test file, and its own Stripe webhook
+   endpoint with its own signing secret (`stripe_checkout_webhook_secret`,
+   `stripe_subscriptions_webhook_secret`). A module can be enabled,
+   rotated or removed without touching the other. One thing is shared by
+   the family and keyed on it being non-empty: `stripe_gateway.py`, the
+   API key and webhook verification.
+2. **The product edits one file per module, not the router.**
+   `checkout_items.py` holds the catalogue and `fulfil()`;
+   `subscription_plans.py` maps plan names to Stripe Price ids read from
+   the environment. Prices are on the server; a client names an item or a
+   plan and gets back a `client_secret`.
+3. **Both modules hand the client a PaymentIntent `client_secret`.** A
+   one-off purchase and a subscription's first invoice look identical to
+   the client, so one web component, `PayForm.jsx`, pays either. Nothing
+   is granted on the client's word; the module's webhook does it.
+4. **The modules exist for the Postgres branch.** Their tables and routers
+   live in that branch's directory; the generator refuses `payments` on
+   `database: aura` until a graph project needs them.
+5. **Overlay migrations sit in a fixed order and chain to the nearest
+   earlier one present.** `0002` push token, `0003` orders, `0004`
+   subscriptions. Each migration file is rendered and computes its own
+   `down_revision` from the other overlays' answers, so every combination
+   is a linear chain and Alembic has one head. The expression lives in the
+   overlay's own file, which is the one place an overlay may know that
+   others exist.
+6. **Overlay dependencies live in `requirements.d/`.** The Dockerfile and
+   CI install `requirements.txt` and then every file in that directory.
+   A shared requirements file cannot carry a conditional line; a directory
+   can carry a conditional file.
+7. **What was left behind.** Stripe Connect and the platform fee, the
+   reservation and expiry cron, the Stripe customer created at
+   registration, and the strategy classes. Each is UniSoc's product, seen
+   once. The generic module keeps the shape: server pricing, an order per
+   attempt, idempotent webhook fulfilment.
+
+**Consequences.**
+
+- `stripe_publishable_key` reaches the web front-end through the static
+  site's `VITE_STRIPE_PUBLISHABLE_KEY`, declared `sync: false` in the
+  blueprint. The provisioner's Render sink writes to API services only, so
+  today that value is set once by hand in the Render dashboard.
+- The mobile app has no payment screen yet. Both modules return what
+  Stripe's payment sheet consumes, and `@stripe/stripe-react-native` is a
+  native module that ADR-016's "one artefact" rule would put in every
+  build; that trade is deferred until a mobile project pays for it.
+- The package manifest of the web overlay carries a conditional block for
+  the Stripe packages, under the same reasoning as the blueprint (ADR-023
+  point 7): a manifest is one file by its tool's design.
+- Enabling a payment module on an existing project by `copier update`
+  inserts a migration into the chain; a database already past that point
+  needs `alembic stamp` by hand. Recorded, not solved.

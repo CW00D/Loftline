@@ -56,7 +56,10 @@ jobs:
           cache-dependency-path: api/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        # The base's, the dev tools, then every overlay's (requirements.d/).
+        run: |
+          pip install -r requirements-dev.txt
+          for f in requirements.d/*.txt; do if [ -e "$f" ]; then pip install -r "$f"; fi; done
 
       - name: Lint
         run: ruff check .

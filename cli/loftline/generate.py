@@ -24,6 +24,7 @@ TEMPLATE_ROOT = Path(__file__).resolve().parents[2]
 # is closed by an extraction (ADR-014, ADR-022), not a lie here.
 RENDERABLE_DATABASES = ("postgres", "aura")
 RENDERABLE_WEB_HOSTS = ("render",)
+PAYMENTS_DATABASES = ("postgres",)
 
 
 def answers_for(spec: Spec) -> dict[str, object]:
@@ -57,6 +58,12 @@ def generate(
         raise GenerateError(
             f"database: {spec.database} has no template branch yet (ADR-023). "
             f"Renderable today: {', '.join(RENDERABLE_DATABASES)}."
+        )
+    if spec.payments and spec.database not in PAYMENTS_DATABASES:
+        raise GenerateError(
+            f"payments modules have files for database: "
+            f"{', '.join(PAYMENTS_DATABASES)} only (ADR-026); the spec asks for "
+            f"{', '.join(spec.payments)} on {spec.database}."
         )
     if spec.web and spec.hosting.web not in RENDERABLE_WEB_HOSTS:
         raise GenerateError(

@@ -1,0 +1,33 @@
+"""Sign a webhook payload the way Stripe does, so a test can post one.
+
+Shared by every payment module's tests. The scheme is Stripe's documented one:
+a timestamp and an HMAC-SHA256 of "<timestamp>.<payload>" under the endpoint's
+signing secret, carried in the Stripe-Signature header.
+"""
+import hashlib
+import hmac
+import json
+import time
+
+
+def signed_event(event: dict, secret: str) -> tuple[bytes, str]:
+    """The exact bytes to post, and the header that signs them."""
+    payload = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    digest = hmac.new(secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256)
+    return payload, f"t={timestamp},v1={digest.hexdigest()}"
+
+
+def event(type_: str, obj: dict) -> dict:
+    """The smallest event envelope the Stripe SDK will accept."""
+    return {
+        "id": "evt_test",
+        "object": "event",
+        "api_version": "2025-08-27.basil",
+        "created": int(time.time()),
+        "livemode": False,
+        "pending_webhooks": 0,
+        "request": None,
+        "type": type_,
+        "data": {"object": obj},
+    }

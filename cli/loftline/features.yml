@@ -77,10 +77,10 @@ features:
   payments.subscriptions:
     enabled_when: {field: payments, contains: subscriptions}
     requires: [stripe_secret_key, stripe_publishable_key]
-    produces: [stripe_webhook_secret]
+    produces: [stripe_subscriptions_webhook_secret]
 
   # One-off purchases through a PaymentIntent, fulfilled by webhook.
   payments.checkout:
     enabled_when: {field: payments, contains: checkout}
     requires: [stripe_secret_key, stripe_publishable_key]
-    produces: [stripe_webhook_secret]
+    produces: [stripe_checkout_webhook_secret]

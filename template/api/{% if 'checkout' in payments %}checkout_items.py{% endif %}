@@ -1,0 +1,36 @@
+"""What can be bought, and what happens when it has been paid for.
+
+Overlay: present only when the project enables the checkout payment module.
+This is the file a product edits; routers/checkout.py should not need to
+change. Prices live here, on the server, so a client can only ever say what
+it wants and how many, never what it costs.
+"""
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger("app.checkout")
+
+
+@dataclass(frozen=True)
+class Item:
+    price_pence: int
+    description: str
+
+
+# Keyed by the name a client sends. Replace the example with the product's
+# own items, or replace the dict with a lookup against the product's tables.
+ITEMS: dict[str, Item] = {
+    "example": Item(price_pence=500, description="An example item"),
+}
+
+CURRENCY = "gbp"
+
+
+def fulfil(order_id: str, user_id: str, item: str, quantity: int) -> None:
+    """Grant the purchase. Runs once, after Stripe confirms payment.
+
+    The default does nothing but log. A product replaces this with whatever
+    a paid order means to it: issue a ticket, unlock a feature, ship a thing.
+    It must be safe to call inside the webhook's transaction.
+    """
+    logger.info("order %s fulfilled: %d x %s for user %s", order_id, quantity, item, user_id)

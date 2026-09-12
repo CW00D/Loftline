@@ -145,7 +145,10 @@ def test_shipped_mapping_matches_the_documented_table() -> None:
         "stripe_secret_key",
         "stripe_publishable_key",
     )
-    assert features["payments.checkout"].produces == ("stripe_webhook_secret",)
+    assert features["payments.checkout"].produces == ("stripe_checkout_webhook_secret",)
+    assert features["payments.subscriptions"].produces == (
+        "stripe_subscriptions_webhook_secret",
+    )
 
 
 def test_the_two_database_features_are_mutually_exclusive() -> None:

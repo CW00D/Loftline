@@ -1,0 +1,39 @@
+"""Stripe, for the payments family. Shared by every payment module.
+
+Present only when the project enables at least one payment module. Holds the
+two things every module needs and nothing a module should decide for itself:
+the API key, and webhook verification.
+
+    STRIPE_SECRET_KEY   the account's secret key (descriptor: stripe_secret_key)
+
+Each module has its own webhook endpoint and its own signing secret, named by
+the module, because each is registered in Stripe as a separate endpoint and
+can be rotated or revoked alone.
+"""
+import os
+
+import stripe
+from fastapi import HTTPException
+
+
+def configure() -> None:
+    """Point the Stripe SDK at the account. Called per request, not at import,
+    so the API boots and answers everything else without a key."""
+    key = os.environ.get("STRIPE_SECRET_KEY")
+    if not key:
+        raise HTTPException(status_code=503, detail="Payments are not configured")
+    stripe.api_key = key
+
+
+def verify_webhook(payload: bytes, signature: str | None, secret_env: str) -> stripe.Event:
+    """The event Stripe sent, or a 400. A missing secret is a 503, because a
+    webhook that cannot be verified must never be acted on."""
+    secret = os.environ.get(secret_env)
+    if not secret:
+        raise HTTPException(status_code=503, detail=f"{secret_env} is not set")
+    try:
+        return stripe.Webhook.construct_event(payload, signature or "", secret)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payload") from None
+    except stripe.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature") from None

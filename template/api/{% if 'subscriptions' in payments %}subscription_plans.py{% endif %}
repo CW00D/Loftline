@@ -1,0 +1,24 @@
+"""The plans a user can subscribe to.
+
+Overlay: present only when the project enables the subscriptions payment
+module. This is the file a product edits; routers/subscriptions.py should
+not need to change.
+
+Each plan maps to a Stripe Price (a recurring one, created in the Stripe
+dashboard under Product catalogue). Price ids are configuration rather than
+secrets, but they differ between test mode and live mode, so they come from
+the environment:
+
+    STRIPE_PRICE_STANDARD   the Price id for the "standard" plan
+"""
+import os
+
+# Keyed by the name a client sends. Add a plan by adding a line and setting
+# its variable on every environment.
+PLANS: dict[str, str] = {
+    "standard": os.environ.get("STRIPE_PRICE_STANDARD", ""),
+}
+
+# What counts as paid up. Stripe's own statuses; "trialing" is included so a
+# free trial, if a Price has one, unlocks the product from day one.
+ACTIVE_STATUSES = ("active", "trialing")

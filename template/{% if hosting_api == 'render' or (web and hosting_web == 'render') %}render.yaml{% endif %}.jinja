@@ -115,6 +115,10 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://{{ project_name }}-api-staging.onrender.com
+{%- if payments %}
+      - key: VITE_STRIPE_PUBLISHABLE_KEY
+        sync: false
+{%- endif %}
     routes:
       - type: rewrite
         source: /*
@@ -130,6 +134,10 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://{{ project_name }}-api-prod.onrender.com
+{%- if payments %}
+      - key: VITE_STRIPE_PUBLISHABLE_KEY
+        sync: false
+{%- endif %}
     routes:
       - type: rewrite
         source: /*

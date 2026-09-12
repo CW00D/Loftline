@@ -42,6 +42,13 @@ cd api
 python -m venv .venv
 .venv\Scripts\pip install -r requirements-dev.txt     # macOS and Linux: .venv/bin/pip
 copy .env.example .env                                # macOS and Linux: cp
+```
+
+If `api/requirements.d/` has files in it, an optional feature needs packages
+of its own; install each file the same way (`pip install -r
+requirements.d/payments.txt`). The Dockerfile and CI do this automatically.
+
+```
 .venv\Scripts\uvicorn main:app --reload
 ```
 

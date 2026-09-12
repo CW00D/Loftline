@@ -71,6 +71,24 @@ def postgres(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
 
 
+@pytest.fixture(scope="module")
+def paid(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Postgres with every overlay that has files: both payment modules,
+    notifications and the web front-end."""
+    dest = tmp_path_factory.mktemp("paid") / "shop"
+    return generate(
+        spec(
+            project_name="shop",
+            package_name="shop",
+            database="postgres",
+            web=True,
+            notifications=True,
+            payments=["subscriptions", "checkout"],
+        ),
+        dest,
+    )
+
+
 # --- the question set --------------------------------------------------------
 
 
@@ -141,14 +159,16 @@ def test_the_placeholder_name_is_gone(minimal: Path) -> None:
     assert leftovers == set()
 
 
-def test_nothing_is_left_unrendered(minimal: Path, full: Path, postgres: Path) -> None:
+def test_nothing_is_left_unrendered(
+    minimal: Path, full: Path, postgres: Path, paid: Path
+) -> None:
     """No Jinja that Copier should have consumed survives.
 
     A bare `{{` is not evidence: JSX writes `style={{ flex: 1 }}` and GitHub
     writes `${{ secrets.X }}`. What must be gone is every template variable
     and every statement tag.
     """
-    for root in (minimal, full, postgres):
+    for root in (minimal, full, postgres, paid):
         for path, text in rendered_text_files(root).items():
             assert "{%" not in text, path
             for variable in ("project_name", "package_name", "_copier"):
@@ -471,6 +491,93 @@ def test_the_aura_blueprint_creates_no_database(minimal: Path) -> None:
     keys = {v["key"] for v in blueprint["services"][0]["envVars"]}
     assert "NEO4J_URI" in keys
     assert "DATABASE_URL" not in keys
+
+
+# --- the payments family (ADR-026) --------------------------------------------
+
+
+def test_each_payment_module_is_its_own_set_of_files(paid: Path) -> None:
+    for expected in [
+        "api/stripe_gateway.py",
+        "api/requirements.d/payments.txt",
+        "api/tests/stripe_signing.py",
+        "api/checkout_items.py",
+        "api/tables_checkout.py",
+        "api/routers/checkout.py",
+        "api/tests/test_checkout.py",
+        "api/migrations/versions/0003_orders.py",
+        "api/subscription_plans.py",
+        "api/tables_subscriptions.py",
+        "api/routers/subscriptions.py",
+        "api/tests/test_subscriptions.py",
+        "api/migrations/versions/0004_subscriptions.py",
+        "web/src/components/PayForm.jsx",
+    ]:
+        assert (paid / expected).is_file(), expected
+
+
+def test_a_project_without_payments_has_none_of_it(postgres: Path) -> None:
+    assert not (postgres / "api/stripe_gateway.py").exists()
+    assert not (postgres / "api/routers/checkout.py").exists()
+    assert not (postgres / "api/routers/subscriptions.py").exists()
+    assert not list((postgres / "api/requirements.d").glob("*.txt"))
+
+
+def test_one_payment_module_alone_leaves_the_other_out(tmp_path: Path) -> None:
+    project = generate(
+        spec(project_name="members", database="postgres", payments=["subscriptions"]),
+        tmp_path / "members",
+    )
+
+    assert (project / "api/routers/subscriptions.py").is_file()
+    assert (project / "api/stripe_gateway.py").is_file()
+    assert not (project / "api/routers/checkout.py").exists()
+    assert not (project / "api/tables_checkout.py").exists()
+    assert not (project / "api/migrations/versions/0003_orders.py").exists()
+
+
+def revises(project: Path, name: str) -> str:
+    text = (project / "api/migrations/versions" / name).read_text(encoding="utf-8")
+    line = next(ln for ln in text.splitlines() if ln.startswith("down_revision"))
+    return line.split('"')[1]
+
+
+def test_overlay_migrations_chain_to_the_nearest_earlier_one(
+    paid: Path, tmp_path: Path
+) -> None:
+    """Every combination is a linear chain, so alembic has one head."""
+    assert revises(paid, "0003_orders.py") == "0002"
+    assert revises(paid, "0004_subscriptions.py") == "0003"
+
+    lone = generate(
+        spec(project_name="lone", database="postgres", payments=["subscriptions"]),
+        tmp_path / "lone",
+    )
+    assert revises(lone, "0004_subscriptions.py") == "0001"
+
+    quiet = generate(
+        spec(project_name="quietshop", database="postgres", payments=["checkout"]),
+        tmp_path / "quietshop",
+    )
+    assert revises(quiet, "0003_orders.py") == "0001"
+
+
+def test_the_web_overlay_carries_stripe_only_with_payments(
+    paid: Path, full: Path
+) -> None:
+    with_payments = (paid / "web/package.json").read_text(encoding="utf-8")
+    without = (full / "web/package.json").read_text(encoding="utf-8")
+
+    assert "@stripe/stripe-js" in with_payments
+    assert "@stripe/stripe-js" not in without
+    assert not (full / "web/src/components/PayForm.jsx").exists()
+
+
+def test_payments_are_refused_on_the_graph_branch(tmp_path: Path) -> None:
+    with pytest.raises(GenerateError, match="ADR-026"):
+        generate(spec(database="aura", payments=["checkout"]), tmp_path / "out")
+
+    assert not (tmp_path / "out").exists()
 
 
 # --- refusals ----------------------------------------------------------------

@@ -1,0 +1,167 @@
+"""One-off purchases through a Stripe PaymentIntent, fulfilled by webhook.
+
+Overlay: present only when the project enables the checkout payment module.
+
+    POST /checkout                 price an item, create an order and a PaymentIntent
+    GET  /checkout/orders          the caller's orders
+    GET  /checkout/orders/{id}     one of them
+    POST /checkout/webhook         Stripe's endpoint for this module
+
+The client never says what something costs: it names an item from
+checkout_items.py and gets back a client_secret for Stripe's payment sheet or
+Payment Element. Nothing is granted until Stripe's webhook says the payment
+succeeded; checkout_items.fulfil runs then, once.
+
+Configuration, in addition to stripe_gateway's:
+
+    STRIPE_CHECKOUT_WEBHOOK_SECRET   signing secret of the webhook endpoint
+                                     registered for POST /checkout/webhook
+                                     (descriptor: stripe_checkout_webhook_secret)
+"""
+import logging
+import uuid
+
+import stripe
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+
+from checkout_items import CURRENCY, ITEMS, fulfil
+from db import get_session
+from routers.auth import current_user
+from stripe_gateway import configure, verify_webhook
+from tables import User
+from tables_checkout import Order
+
+logger = logging.getLogger("app.checkout")
+
+router = APIRouter(prefix="/checkout")
+
+WEBHOOK_SECRET_ENV = "STRIPE_CHECKOUT_WEBHOOK_SECRET"
+
+
+class CheckoutRequest(BaseModel):
+    item: str = Field(min_length=1, max_length=80)
+    quantity: int = Field(default=1, ge=1, le=100)
+
+
+class CheckoutResponse(BaseModel):
+    order_id: str
+    client_secret: str
+    amount_pence: int
+    currency: str
+
+
+class OrderResponse(BaseModel):
+    id: str
+    item: str
+    quantity: int
+    amount_pence: int
+    currency: str
+    status: str
+    created_at: str
+
+
+def _order_response(order: Order) -> OrderResponse:
+    return OrderResponse(
+        id=order.id,
+        item=order.item,
+        quantity=order.quantity,
+        amount_pence=order.amount_pence,
+        currency=order.currency,
+        status=order.status,
+        created_at=order.created_at.isoformat(),
+    )
+
+
+@router.post("", response_model=CheckoutResponse)
+def checkout(body: CheckoutRequest, user: User = Depends(current_user)):
+    item = ITEMS.get(body.item)
+    if item is None:
+        raise HTTPException(status_code=400, detail=f"No such item: {body.item}")
+    configure()
+
+    order = Order(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        item=body.item,
+        quantity=body.quantity,
+        amount_pence=item.price_pence * body.quantity,
+        currency=CURRENCY,
+        status="pending",
+    )
+    # The order is written before Stripe is called, so a PaymentIntent can
+    # never exist without an order to land on.
+    with get_session() as session:
+        session.add(order)
+        session.commit()
+
+    try:
+        intent = stripe.PaymentIntent.create(
+            amount=order.amount_pence,
+            currency=order.currency,
+            metadata={"order_id": order.id, "user_id": user.id, "item": order.item},
+            description=item.description,
+        )
+    except stripe.StripeError as exc:
+        logger.error("PaymentIntent for order %s failed: %s", order.id, exc)
+        raise HTTPException(status_code=502, detail="Payment provider error") from None
+
+    with get_session() as session:
+        session.get(Order, order.id).stripe_payment_intent_id = intent.id
+        session.commit()
+
+    return CheckoutResponse(
+        order_id=order.id,
+        client_secret=intent.client_secret,
+        amount_pence=order.amount_pence,
+        currency=order.currency,
+    )
+
+
+@router.get("/orders", response_model=list[OrderResponse])
+def my_orders(user: User = Depends(current_user)):
+    with get_session() as session:
+        orders = session.scalars(
+            select(Order).where(Order.user_id == user.id).order_by(Order.created_at.desc())
+        ).all()
+    return [_order_response(o) for o in orders]
+
+
+@router.get("/orders/{order_id}", response_model=OrderResponse)
+def one_order(order_id: str, user: User = Depends(current_user)):
+    with get_session() as session:
+        order = session.get(Order, order_id)
+    # 404 for someone else's order too: the id alone must reveal nothing.
+    if order is None or order.user_id != user.id:
+        raise HTTPException(status_code=404, detail="No such order")
+    return _order_response(order)
+
+
+@router.post("/webhook")
+async def webhook(request: Request, stripe_signature: str | None = Header(default=None)):
+    """Stripe's endpoint for this module. Idempotent: an event replayed by
+    Stripe, which it does, finds nothing left to do."""
+    event = verify_webhook(await request.body(), stripe_signature, WEBHOOK_SECRET_ENV)
+    if event.type not in ("payment_intent.succeeded", "payment_intent.payment_failed"):
+        return {"ok": True, "handled": False}
+
+    intent_id = event.data.object["id"]
+    with get_session() as session:
+        order = session.scalar(
+            select(Order).where(Order.stripe_payment_intent_id == intent_id)
+        )
+        if order is None:
+            # Not ours, or from before this deployment. Acknowledged so Stripe
+            # stops retrying; logged so somebody sees it.
+            logger.warning("webhook %s for unknown PaymentIntent %s", event.type, intent_id)
+            return {"ok": True, "handled": False}
+        if order.status != "pending":
+            return {"ok": True, "handled": False}
+        if event.type == "payment_intent.succeeded":
+            order.status = "completed"
+            fulfil(order.id, order.user_id, order.item, order.quantity)
+        else:
+            order.status = "failed"
+        session.commit()
+    return {"ok": True, "handled": True}

@@ -1,0 +1,268 @@
+"""Rolling membership through Stripe Billing.
+
+Overlay: present only when the project enables the subscriptions payment
+module.
+
+    GET    /subscriptions/plans      the plans on offer
+    GET    /subscriptions/me         the caller's membership
+    POST   /subscriptions            start one; returns a client_secret to pay the first invoice
+    DELETE /subscriptions/me         cancel at the end of the paid period
+    POST   /subscriptions/webhook    Stripe's endpoint for this module
+
+A subscription is created incomplete, its first invoice's PaymentIntent is
+handed to the client to pay with Stripe's payment sheet or Payment Element,
+and Stripe's webhook turns it active. From then on Stripe bills on its own
+and the webhook keeps the row's status current. Other routers gate on
+membership with `Depends(require_active_subscription)`.
+
+Configuration, in addition to stripe_gateway's and subscription_plans':
+
+    STRIPE_SUBSCRIPTIONS_WEBHOOK_SECRET   signing secret of the webhook endpoint
+                                          registered for POST /subscriptions/webhook
+                                          (descriptor: stripe_subscriptions_webhook_secret)
+"""
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+import stripe
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+
+from db import get_session
+from routers.auth import current_user
+from stripe_gateway import configure, verify_webhook
+from subscription_plans import ACTIVE_STATUSES, PLANS
+from tables import User
+from tables_subscriptions import Subscription
+
+logger = logging.getLogger("app.subscriptions")
+
+router = APIRouter(prefix="/subscriptions")
+
+WEBHOOK_SECRET_ENV = "STRIPE_SUBSCRIPTIONS_WEBHOOK_SECRET"
+
+HANDLED_EVENTS = (
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "invoice.paid",
+    "invoice.payment_failed",
+)
+
+
+class SubscribeRequest(BaseModel):
+    plan: str
+
+
+class SubscribeResponse(BaseModel):
+    subscription_id: str
+    client_secret: str | None
+    status: str
+
+
+class MembershipResponse(BaseModel):
+    active: bool
+    plan: str | None = None
+    status: str | None = None
+    current_period_end: str | None = None
+    cancel_at_period_end: bool = False
+
+
+def _membership(row: Subscription | None) -> MembershipResponse:
+    if row is None:
+        return MembershipResponse(active=False)
+    return MembershipResponse(
+        active=row.status in ACTIVE_STATUSES,
+        plan=row.plan,
+        status=row.status,
+        current_period_end=(
+            row.current_period_end.isoformat() if row.current_period_end else None
+        ),
+        cancel_at_period_end=row.cancel_at_period_end,
+    )
+
+
+def _row_for(session, user_id: str) -> Subscription | None:
+    return session.scalar(select(Subscription).where(Subscription.user_id == user_id))
+
+
+def require_active_subscription(user: User = Depends(current_user)) -> User:
+    """A dependency for routers that are members-only. 402 otherwise."""
+    with get_session() as session:
+        row = _row_for(session, user.id)
+    if row is None or row.status not in ACTIVE_STATUSES:
+        raise HTTPException(status_code=402, detail="An active subscription is required")
+    return user
+
+
+@router.get("/plans")
+def plans():
+    return [{"plan": name, "price_id": price} for name, price in PLANS.items() if price]
+
+
+@router.get("/me", response_model=MembershipResponse)
+def me(user: User = Depends(current_user)):
+    with get_session() as session:
+        return _membership(_row_for(session, user.id))
+
+
+@router.post("", response_model=SubscribeResponse)
+def subscribe(body: SubscribeRequest, user: User = Depends(current_user)):
+    price_id = PLANS.get(body.plan)
+    if not price_id:
+        raise HTTPException(status_code=400, detail=f"No such plan: {body.plan}")
+    configure()
+
+    with get_session() as session:
+        row = _row_for(session, user.id)
+        if row is not None and row.status in ACTIVE_STATUSES:
+            raise HTTPException(status_code=409, detail="Already subscribed")
+        customer_id = row.stripe_customer_id if row is not None else None
+
+    try:
+        if customer_id is None:
+            customer = stripe.Customer.create(
+                email=user.email, name=user.name, metadata={"user_id": user.id}
+            )
+            customer_id = customer.id
+        subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{"price": price_id}],
+            payment_behavior="default_incomplete",
+            payment_settings={"save_default_payment_method": "on_subscription"},
+            expand=["latest_invoice.payment_intent"],
+            metadata={"user_id": user.id, "plan": body.plan},
+        )
+    except stripe.StripeError as exc:
+        logger.error("subscription for user %s failed: %s", user.id, exc)
+        raise HTTPException(status_code=502, detail="Payment provider error") from None
+
+    with get_session() as session:
+        row = _row_for(session, user.id)
+        if row is None:
+            row = Subscription(
+                id=str(uuid.uuid4()), user_id=user.id, stripe_customer_id=customer_id
+            )
+            session.add(row)
+        row.stripe_customer_id = customer_id
+        row.stripe_subscription_id = subscription.id
+        row.plan = body.plan
+        row.status = subscription.status
+        row.cancel_at_period_end = False
+        row.current_period_end = _period_end(subscription)
+        session.commit()
+
+    return SubscribeResponse(
+        subscription_id=subscription.id,
+        client_secret=_client_secret(subscription),
+        status=subscription.status,
+    )
+
+
+@router.delete("/me")
+def cancel(user: User = Depends(current_user)):
+    """Cancel at the end of the paid period. The webhook records the final
+    state when Stripe gets there."""
+    with get_session() as session:
+        row = _row_for(session, user.id)
+        if row is None or row.stripe_subscription_id is None or row.status not in ACTIVE_STATUSES:
+            raise HTTPException(status_code=404, detail="No active subscription")
+        subscription_id = row.stripe_subscription_id
+    configure()
+    try:
+        stripe.Subscription.modify(subscription_id, cancel_at_period_end=True)
+    except stripe.StripeError as exc:
+        logger.error("cancel for user %s failed: %s", user.id, exc)
+        raise HTTPException(status_code=502, detail="Payment provider error") from None
+    with get_session() as session:
+        _row_for(session, user.id).cancel_at_period_end = True
+        session.commit()
+    return {"ok": True}
+
+
+@router.post("/webhook")
+async def webhook(request: Request, stripe_signature: str | None = Header(default=None)):
+    """Stripe's endpoint for this module. Every handled event carries the
+    subscription's current state, so applying it is idempotent."""
+    event = verify_webhook(await request.body(), stripe_signature, WEBHOOK_SECRET_ENV)
+    if event.type not in HANDLED_EVENTS:
+        return {"ok": True, "handled": False}
+    obj = event.data.object
+
+    if event.type.startswith("customer.subscription."):
+        subscription_id = _get(obj, "id")
+        status = "canceled" if event.type.endswith("deleted") else _get(obj, "status")
+        period_end = _period_end(obj)
+        cancel_at_period_end = bool(_get(obj, "cancel_at_period_end", False))
+    else:
+        subscription_id = _subscription_of_invoice(obj)
+        if subscription_id is None:
+            return {"ok": True, "handled": False}
+        status = "active" if event.type == "invoice.paid" else "past_due"
+        period_end = None
+        cancel_at_period_end = None
+
+    with get_session() as session:
+        row = session.scalar(
+            select(Subscription).where(Subscription.stripe_subscription_id == subscription_id)
+        )
+        if row is None:
+            logger.warning("webhook %s for unknown subscription %s", event.type, subscription_id)
+            return {"ok": True, "handled": False}
+        row.status = status
+        if period_end is not None:
+            row.current_period_end = period_end
+        if cancel_at_period_end is not None:
+            row.cancel_at_period_end = cancel_at_period_end
+        session.commit()
+    return {"ok": True, "handled": True}
+
+
+# --- reading Stripe's objects -------------------------------------------------
+# Stripe moved current_period_end from the subscription to its items, and the
+# invoice's subscription reference under `parent`, in its 2025 API versions.
+# Both shapes are read so the module does not care which version the account
+# is pinned to. Stripe's objects answer to attributes and to [] but are not
+# dicts; plain dicts arrive from tests; both are read the same way.
+
+
+def _get(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    try:
+        return getattr(obj, key)
+    except (AttributeError, KeyError):
+        return default
+
+
+def _period_end(subscription: Any) -> datetime | None:
+    epoch = _get(subscription, "current_period_end")
+    if epoch is None:
+        items = _get(subscription, "items")
+        data = _get(items, "data") or []
+        if data:
+            epoch = _get(data[0], "current_period_end")
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(int(epoch), tz=timezone.utc)
+
+
+def _subscription_of_invoice(invoice: Any) -> str | None:
+    direct = _get(invoice, "subscription")
+    if isinstance(direct, str):
+        return direct
+    if direct is not None:
+        return _get(direct, "id")
+    parent = _get(invoice, "parent") or {}
+    details = _get(parent, "subscription_details") or {}
+    ref = _get(details, "subscription")
+    return ref if isinstance(ref, str) else _get(ref, "id")
+
+
+def _client_secret(subscription: Any) -> str | None:
+    invoice = _get(subscription, "latest_invoice")
+    intent = _get(invoice, "payment_intent") if invoice is not None else None
+    return _get(intent, "client_secret") if intent is not None else None
