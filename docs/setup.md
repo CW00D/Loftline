@@ -174,3 +174,19 @@ without sharing any credential.
    the project's spec and health up, and writes the collaborators the team
    asked for into `<generated dir>/infra/terraform.tfvars`. `terraform apply`
    there adds them; the next sync marks them as on the repository.
+
+### Defining a project on the dashboard
+
+New project on the dashboard records the spec. On a machine with the vault
+and GitHub signed in, `loftline realise <name> --into <fresh directory>`
+(add `--org <slug>` for an organisation's project) generates it, creates the
+repository, pushes, opens the promotion pull request, writes the secrets and
+reports back. Connect the blueprint on Render when it tells you to, then
+`loftline provision`.
+
+The project page lists every credential the project needs with its state.
+For a missing one it shows how to get it and offers the command to store it.
+Run `loftline register-url-handler` once and the Store button opens a
+terminal already running `loftline vault set <name>`; otherwise copy the
+command. Either way the value is pasted into the terminal and never into the
+page.
