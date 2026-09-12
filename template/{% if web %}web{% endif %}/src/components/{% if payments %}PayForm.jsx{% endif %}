@@ -64,7 +64,7 @@ function Form({ amountPence, onPaid, onCancel }) {
  */
 export function PayForm({ clientSecret, amountPence, onPaid, onCancel }) {
   return (
-    <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: "night" } }}>
+    <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: "stripe" } }}>
       <Form amountPence={amountPence} onPaid={onPaid} onCancel={onCancel} />
     </Elements>
   );
