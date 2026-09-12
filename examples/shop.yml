@@ -1,0 +1,13 @@
+# A product that charges: Postgres, a web front-end and both payment
+# modules, each its own overlay. `loftline new examples/shop.yml _scratch/shop`
+# renders it; `loftline plan examples/shop.yml` lists the Stripe credentials
+# it needs and the webhook secrets provisioning will produce.
+project_name: shop
+package_name: shop
+database: postgres
+web: true
+payments: [subscriptions, checkout]
+hosting:
+  api: render
+  web: render
+environments: [staging, production]
