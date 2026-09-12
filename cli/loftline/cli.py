@@ -25,6 +25,7 @@ from .generate import generate
 from .models import load_descriptors, load_spec
 from .providers.aura import AuraClient
 from .providers.render import RenderClient
+from .providers.stripe import StripeClient
 from .provision import provision
 from .report import render_plan
 from .resolve import Derive, Inject, resolve
@@ -392,9 +393,20 @@ def provision_command(
         for environment_name in sorted({e for t in targets for e in t.environments}):
             github.ensure_environment(environment_name)
         render = RenderClient(store.get(descriptors["render_api_key"].vault_path or ""))
-        aura = AuraClient(
-            store.get(descriptors["aura_client_id"].vault_path or ""),
-            store.get(descriptors["aura_client_secret"].vault_path or ""),
+        # Vendor clients only for what the spec uses: an Aura key is not asked
+        # of a Postgres project, nor a Stripe key of one without payments.
+        aura = (
+            AuraClient(
+                store.get(descriptors["aura_client_id"].vault_path or ""),
+                store.get(descriptors["aura_client_secret"].vault_path or ""),
+            )
+            if project.database == "aura"
+            else None
+        )
+        stripe = (
+            StripeClient(store.get(descriptors["stripe_secret_key"].vault_path or ""))
+            if project.payments
+            else None
         )
         report = provision(
             project,
@@ -403,6 +415,7 @@ def provision_command(
             github,
             render,
             aura,
+            stripe=stripe,
             environments=environment,
             instance_type=aura_type,
             region=region,
@@ -417,12 +430,19 @@ def provision_command(
             entry.healthy
         ]
         typer.echo(
-            f"  {entry.environment:11} {entry.service}  instance {entry.instance} "
+            f"  {entry.environment:11} {entry.service}  database {entry.instance} "
             f"({entry.instance_status})  deploy {entry.deploy_status or 'skipped'}  "
             f"{health}"
         )
         if entry.url:
             typer.echo(f"  {'':11} {entry.url}")
+        if entry.webhooks:
+            typer.echo(
+                f"  {'':11} Stripe webhooks registered: {', '.join(entry.webhooks)}"
+            )
+        if entry.web_service:
+            web_deploy = entry.web_deploy_status or "skipped"
+            typer.echo(f"  {'':11} {entry.web_service}  deploy {web_deploy}")
     typer.echo("No value was printed.")
 
 

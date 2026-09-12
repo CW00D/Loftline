@@ -1186,10 +1186,11 @@ had to be built from Stripe Billing's documented integration.
 
 **Consequences.**
 
-- `stripe_publishable_key` reaches the web front-end through the static
-  site's `VITE_STRIPE_PUBLISHABLE_KEY`, declared `sync: false` in the
-  blueprint. The provisioner's Render sink writes to API services only, so
-  today that value is set once by hand in the Render dashboard.
+- `stripe_publishable_key` reaches the web front-end under its own name:
+  the static site's `STRIPE_PUBLISHABLE_KEY`, declared `sync: false` in the
+  blueprint and listed as its own Vite prefix. The provisioner writes every
+  held credential consumed by `web` to the static site as well as the API,
+  and rebuilds the site so the value is baked in (ADR-027).
 - The mobile app has no payment screen yet. Both modules return what
   Stripe's payment sheet consumes, and `@stripe/stripe-react-native` is a
   native module that ADR-016's "one artefact" rule would put in every
@@ -1200,3 +1201,50 @@ had to be built from Stripe Billing's documented integration.
 - Enabling a payment module on an existing project by `copier update`
   inserts a migration into the chain; a database already past that point
   needs `alembic stamp` by hand. Recorded, not solved.
+
+---
+
+## ADR-027: The provisioner follows the spec
+
+**Status:** Accepted. Extends ADR-021.
+
+**Context.** The provisioner was written for one shape of project: Aura
+behind a Render API service. The spec now chooses the database, adds a web
+front-end and lists payment modules, each of which produces or consumes a
+credential at provisioning time.
+
+**Decision.**
+
+1. **The database step is per database.** On Aura, as before: create or
+   reuse an instance, write its three values. On Postgres, nothing: the
+   blueprint created the database beside the service and Render sets
+   `DATABASE_URL` on the service itself. The report says `blueprint`.
+   The Aura client is built only for an Aura project, so a Postgres project
+   is never asked for Aura credentials.
+2. **Each payment module's webhook endpoint is registered by the
+   provisioner.** For every module in `payments`, an endpoint at the
+   service's URL plus the module's path is created in Stripe with the
+   module's events, and the signing secret Stripe returns once is written
+   to the service and to GitHub under the module's secret name. The service
+   is the record: a re-run finds the secret there and registers nothing. An
+   endpoint Stripe has but the service does not is refused, as an Aura
+   instance with a lost password is.
+3. **A held credential consumed by `web` is written to the static site as
+   well as the API,** under its descriptor name, and the site is rebuilt
+   so the value reaches the bundle. Injected credentials now carry their
+   descriptor's `consumed_by` for this purpose.
+4. **Every service the spec implies must exist before anything is
+   written,** the static sites included, so a blueprint connected before
+   `web` was enabled fails cleanly rather than half-provisioning.
+
+**Consequences.**
+
+- The Stripe client speaks the form-encoded REST API through the same
+  injectable transport as the others; Loftline gains no SDK.
+- Connecting the blueprint remains the one manual step. Render's API can
+  create services directly, which would remove it, but Render's GitHub
+  access is itself granted by hand per repository, so the step would move
+  rather than vanish.
+- The mobile app's consumption of the publishable key is not provisioned:
+  EAS builds read `eas.json`, and the value is not a secret. It is a
+  documented edit when a mobile project takes payments.

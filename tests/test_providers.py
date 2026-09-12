@@ -10,6 +10,7 @@ import pytest
 from loftline.errors import ProvisionError
 from loftline.providers.aura import AuraClient
 from loftline.providers.render import RenderClient
+from loftline.providers.stripe import StripeClient
 
 Call = tuple[str, str, dict[str, str], bytes | None]
 
@@ -291,3 +292,69 @@ def test_render_deploy_and_wait() -> None:
 
     assert deploy_id == "dep-1"
     assert client.wait_for_deploy("srv-1", deploy_id) == "live"
+
+
+# --- Stripe ------------------------------------------------------------------
+
+
+def test_stripe_create_webhook_endpoint_is_form_encoded_and_keeps_the_secret() -> None:
+    transport = FakeTransport(
+        {
+            ("POST", "/v1/webhook_endpoints"): (
+                200,
+                {
+                    "id": "we_1",
+                    "url": "https://x/checkout/webhook",
+                    "secret": "whsec_once",
+                },
+            )
+        }
+    )
+    client = StripeClient("sk_test_x", transport=transport)
+
+    endpoint = client.create_webhook_endpoint(
+        "https://x/checkout/webhook",
+        ["payment_intent.succeeded", "payment_intent.payment_failed"],
+    )
+
+    assert endpoint.secret == "whsec_once"
+    _method, _path, headers, body = transport.calls[0]
+    assert headers["Authorization"] == "Bearer sk_test_x"
+    assert headers["Content-Type"] == "application/x-www-form-urlencoded"
+    assert body is not None
+    assert b"url=https%3A%2F%2Fx%2Fcheckout%2Fwebhook" in body
+    assert b"enabled_events%5B0%5D=payment_intent.succeeded" in body
+    assert b"enabled_events%5B1%5D=payment_intent.payment_failed" in body
+
+
+def test_stripe_find_webhook_endpoint_by_url_never_has_a_secret() -> None:
+    transport = FakeTransport(
+        {
+            ("GET", "/v1/webhook_endpoints?limit=100"): (
+                200,
+                {"data": [{"id": "we_1", "url": "https://x/checkout/webhook"}]},
+            )
+        }
+    )
+    client = StripeClient("sk_test_x", transport=transport)
+
+    found = client.find_webhook_endpoint("https://x/checkout/webhook")
+    missing = client.find_webhook_endpoint("https://x/subscriptions/webhook")
+
+    assert found is not None and found.id == "we_1" and found.secret is None
+    assert missing is None
+
+
+def test_stripe_errors_name_the_call_and_what_stripe_said() -> None:
+    transport = FakeTransport(
+        {
+            ("POST", "/v1/webhook_endpoints"): (
+                401,
+                {"error": {"message": "Invalid API Key provided"}},
+            )
+        }
+    )
+    client = StripeClient("sk_test_x", transport=transport)
+
+    with pytest.raises(ProvisionError, match="Invalid API Key provided"):
+        client.create_webhook_endpoint("https://x/checkout/webhook", ["invoice.paid"])

@@ -8,7 +8,7 @@ import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-
 // modules hand back: POST /checkout for a one-off purchase, POST
 // /subscriptions for a membership's first invoice. Nothing is granted here;
 // the API's webhook does that once Stripe confirms.
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? "");
+const stripePromise = loadStripe(import.meta.env.STRIPE_PUBLISHABLE_KEY ?? "");
 
 function formatPence(pence) {
   return `£${(pence / 100).toFixed(2)}`;

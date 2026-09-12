@@ -38,6 +38,9 @@ class Inject:
     github_secret: str
     environments: tuple[str, ...]
     expires_at: datetime | None = None
+    # Which components read it (descriptor consumed_by). The provisioner uses
+    # it to decide which hosted services receive the value.
+    consumed_by: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,7 @@ def resolve(
                     github_secret=descriptor.github_secret,
                     environments=environments,
                     expires_at=_expires_at(descriptor, index),
+                    consumed_by=descriptor.consumed_by,
                 )
             )
         else:

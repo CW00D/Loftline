@@ -116,7 +116,7 @@ services:
       - key: VITE_API_URL
         value: https://{{ project_name }}-api-staging.onrender.com
 {%- if payments %}
-      - key: VITE_STRIPE_PUBLISHABLE_KEY
+      - key: STRIPE_PUBLISHABLE_KEY
         sync: false
 {%- endif %}
     routes:
@@ -135,7 +135,7 @@ services:
       - key: VITE_API_URL
         value: https://{{ project_name }}-api-prod.onrender.com
 {%- if payments %}
-      - key: VITE_STRIPE_PUBLISHABLE_KEY
+      - key: STRIPE_PUBLISHABLE_KEY
         sync: false
 {%- endif %}
     routes:

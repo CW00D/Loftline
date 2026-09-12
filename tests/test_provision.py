@@ -9,8 +9,10 @@ from datetime import datetime
 import pytest
 
 from loftline.errors import ProvisionError
+from loftline.models import Spec
 from loftline.providers.aura import Instance
 from loftline.providers.render import Service
+from loftline.providers.stripe import WebhookEndpoint
 from loftline.provision import provision, service_name
 from loftline.resolve import Defer, Derive, Inject, Request, Resolution
 
@@ -375,3 +377,270 @@ def test_the_report_carries_no_values() -> None:
 
     assert "hunter2" not in repr(report)
     assert "pw-demo" not in repr(report)
+
+
+# --- ADR-027: Postgres, Stripe webhooks and the static site -------------------
+
+
+class FakeStripe:
+    def __init__(self, existing: set[str] | None = None) -> None:
+        self.existing = existing or set()
+        self.created: list[tuple[str, list[str]]] = []
+
+    def find_webhook_endpoint(self, url: str) -> WebhookEndpoint | None:
+        if url in self.existing:
+            return WebhookEndpoint(id="we_old", url=url, secret=None)
+        return None
+
+    def create_webhook_endpoint(self, url: str, events: list[str]) -> WebhookEndpoint:
+        self.created.append((url, events))
+        self.existing.add(url)
+        return WebhookEndpoint(
+            id=f"we_{len(self.created)}", url=url, secret=f"whsec_{url}"
+        )
+
+
+def shop_services() -> dict[str, Service]:
+    return {
+        **services("shop"),
+        "shop-web-staging": Service(
+            "web-s", "shop-web-staging", "https://ws.onrender.com", "staging"
+        ),
+        "shop-web-prod": Service(
+            "web-p", "shop-web-prod", "https://wp.onrender.com", "prod"
+        ),
+    }
+
+
+def shop_resolution() -> Resolution:
+    return Resolution(
+        features=("base", "payments.checkout", "payments.subscriptions", "web"),
+        inject=(
+            Inject(
+                "smtp_user",
+                "loftline/google/smtp_user",
+                "SMTP_USER",
+                ENVS,
+                consumed_by=("backend",),
+            ),
+            Inject(
+                "stripe_secret_key",
+                "loftline/stripe/secret_key",
+                "STRIPE_SECRET_KEY",
+                ENVS,
+                consumed_by=("backend",),
+            ),
+            Inject(
+                "stripe_publishable_key",
+                "loftline/stripe/publishable_key",
+                "STRIPE_PUBLISHABLE_KEY",
+                ENVS,
+                consumed_by=("web", "mobile"),
+            ),
+        ),
+        derive=(Derive("jwt_secret", "random_bytes_32_base64", "JWT_SECRET", ENVS),),
+        defer=(
+            Defer("database_url", "render_postgres_create", "DATABASE_URL", ENVS),
+            Defer(
+                "stripe_checkout_webhook_secret",
+                "stripe_webhook_create",
+                "STRIPE_CHECKOUT_WEBHOOK_SECRET",
+                ENVS,
+            ),
+        ),
+    )
+
+
+def shop_vault() -> FakeVault:
+    return FakeVault(
+        {
+            "loftline/google/smtp_user": "me@gmail.com",
+            "loftline/stripe/secret_key": "sk_test_x",
+            "loftline/stripe/publishable_key": "pk_test_x",
+        }
+    )
+
+
+def shop_spec() -> Spec:
+    return spec(
+        project_name="shop",
+        database="postgres",
+        web=True,
+        payments=["checkout", "subscriptions"],
+    )
+
+
+def test_postgres_creates_no_instance_and_needs_no_aura_client() -> None:
+    render, github, stripe = FakeRender(shop_services()), FakeGitHub(), FakeStripe()
+
+    report = provision(
+        shop_spec(),
+        shop_resolution(),
+        shop_vault(),
+        github,
+        render,
+        stripe=stripe,
+        environments=["staging"],
+        health=lambda url: True,
+    )
+
+    entry = report.environments[0]
+    assert entry.instance == "shop-db-staging"
+    assert entry.instance_status == "blueprint"
+    assert "DATABASE_URL" not in render.env["srv-s"]
+    assert ("DATABASE_URL", "staging") not in github.writes
+    assert render.env["srv-s"]["SMTP_USER"] == "me@gmail.com"
+
+
+def test_each_payment_module_gets_its_own_webhook_endpoint_and_secret() -> None:
+    render, github, stripe = FakeRender(shop_services()), FakeGitHub(), FakeStripe()
+
+    report = provision(
+        shop_spec(),
+        shop_resolution(),
+        shop_vault(),
+        github,
+        render,
+        stripe=stripe,
+        environments=["staging"],
+        deploy=False,
+    )
+
+    urls = [url for url, _ in stripe.created]
+    assert urls == [
+        "https://s.onrender.com/checkout/webhook",
+        "https://s.onrender.com/subscriptions/webhook",
+    ]
+    assert "invoice.paid" in stripe.created[1][1]
+    staging = render.env["srv-s"]
+    assert (
+        staging["STRIPE_CHECKOUT_WEBHOOK_SECRET"]
+        == "whsec_https://s.onrender.com/checkout/webhook"
+    )
+    assert github.writes[("STRIPE_SUBSCRIPTIONS_WEBHOOK_SECRET", "staging")] == (
+        "whsec_https://s.onrender.com/subscriptions/webhook"
+    )
+    assert report.environments[0].webhooks == ("checkout", "subscriptions")
+
+
+def test_a_webhook_secret_already_on_the_service_is_reused_not_re_registered() -> None:
+    svc = shop_services()
+    render = FakeRender(
+        svc,
+        env={
+            "srv-s": {
+                "STRIPE_CHECKOUT_WEBHOOK_SECRET": "whsec_kept",
+                "STRIPE_SUBSCRIPTIONS_WEBHOOK_SECRET": "whsec_kept2",
+            },
+            "srv-p": {},
+            "web-s": {},
+            "web-p": {},
+        },
+    )
+    github, stripe = FakeGitHub(), FakeStripe()
+
+    report = provision(
+        shop_spec(),
+        shop_resolution(),
+        shop_vault(),
+        github,
+        render,
+        stripe=stripe,
+        environments=["staging"],
+        deploy=False,
+    )
+
+    assert stripe.created == []
+    assert github.writes[("STRIPE_CHECKOUT_WEBHOOK_SECRET", "staging")] == "whsec_kept"
+    assert report.environments[0].webhooks == ()
+
+
+def test_an_endpoint_stripe_has_but_the_service_does_not_is_refused() -> None:
+    stripe = FakeStripe(existing={"https://s.onrender.com/checkout/webhook"})
+
+    with pytest.raises(ProvisionError, match="only ever shows once"):
+        provision(
+            shop_spec(),
+            shop_resolution(),
+            shop_vault(),
+            FakeGitHub(),
+            FakeRender(shop_services()),
+            stripe=stripe,
+            environments=["staging"],
+            deploy=False,
+        )
+
+    assert stripe.created == []
+
+
+def test_payments_without_a_stripe_client_is_refused_before_anything_is_written() -> (
+    None
+):
+    render = FakeRender(shop_services())
+
+    with pytest.raises(ProvisionError, match="Stripe client"):
+        provision(
+            shop_spec(),
+            shop_resolution(),
+            shop_vault(),
+            FakeGitHub(),
+            render,
+            environments=["staging"],
+            deploy=False,
+        )
+
+    assert render.deploys == []
+
+
+def test_web_consumed_credentials_reach_the_static_site_and_it_is_rebuilt() -> None:
+    render, github = FakeRender(shop_services()), FakeGitHub()
+
+    report = provision(
+        shop_spec(),
+        shop_resolution(),
+        shop_vault(),
+        github,
+        render,
+        stripe=FakeStripe(),
+        environments=["staging"],
+        health=lambda url: True,
+    )
+
+    assert render.env["web-s"] == {"STRIPE_PUBLISHABLE_KEY": "pk_test_x"}
+    assert "SMTP_USER" not in render.env["web-s"]
+    assert render.env["srv-s"]["STRIPE_PUBLISHABLE_KEY"] == "pk_test_x"
+    assert render.deploys == ["srv-s", "web-s"]
+    entry = report.environments[0]
+    assert entry.web_service == "shop-web-staging"
+    assert entry.web_deploy_status == "live"
+
+
+def test_a_missing_static_site_stops_everything() -> None:
+    render = FakeRender(services("shop"))
+
+    with pytest.raises(ProvisionError, match="static site named shop-web-staging"):
+        provision(
+            shop_spec(),
+            shop_resolution(),
+            shop_vault(),
+            FakeGitHub(),
+            render,
+            stripe=FakeStripe(),
+            environments=["staging"],
+        )
+
+    assert render.deploys == []
+
+
+def test_an_aura_project_still_needs_its_client() -> None:
+    with pytest.raises(ProvisionError, match="Aura client"):
+        provision(
+            spec(project_name="demo", database="aura"),
+            resolution(),
+            FakeVault({"loftline/google/smtp_user": "x"}),
+            FakeGitHub(),
+            FakeRender(services()),
+            None,
+            environments=["staging"],
+            deploy=False,
+        )
