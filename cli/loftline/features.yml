@@ -3,10 +3,12 @@
 # Data, not code. The resolver unions the requirements of every feature the
 # spec enables, and defers everything they produce to provisioning time.
 #
-# enabled_when takes one of three forms:
-#   {always: true}                          always enabled
-#   {field: <spec field>, is_true: true}    enabled by a boolean spec flag
-#   {field: <spec field>, equals: <value>}  enabled by a spec choice
+# enabled_when takes one of these forms:
+#   {always: true}                            always enabled
+#   {field: <spec field>, is_true: true}      a boolean spec flag
+#   {field: <spec field>, equals: <value>}    a spec choice; fields may be nested (hosting.api)
+#   {field: <spec list>, contains: <value>}   membership of a spec list (payments)
+#   {all_of: [<selector>, <selector>]}        every one of them
 #
 # requires: credentials that must exist before generation.
 # produces: credentials that cannot exist until provisioning creates them.
@@ -19,21 +21,28 @@ version: 1
 features:
 
   # The base template itself: what every generated project needs before any
-  # optional feature is considered. The skeleton in template/ signs sessions
-  # with a per-project secret and sends password reset codes over SMTP.
+  # optional feature is considered. Every backend signs sessions with a
+  # per-project secret and sends password reset codes over SMTP.
   base:
     enabled_when: {always: true}
     requires: [jwt_secret, smtp_user, smtp_password]
 
-  # Hosting is not a spec question. There is one hosting provider, so the
-  # feature is unconditional. It becomes a choice the day there is a second,
-  # and that is a spec schema change made deliberately.
-  hosting.render:
-    enabled_when: {always: true}
+  # --- hosting, one provider per slot (ADR-022) -------------------------------
+
+  hosting.api.render:
+    enabled_when: {field: hosting.api, equals: render}
     requires: [render_api_key]
     produces: [render_service_id]
 
-  # The database slot is the single genuinely exclusive parameter (ADR-004).
+  hosting.web.render:
+    enabled_when:
+      all_of:
+        - {field: web, is_true: true}
+        - {field: hosting.web, equals: render}
+    requires: [render_api_key]
+
+  # --- the database slot, the one exclusive choice (ADR-004) ------------------
+
   database.postgres:
     enabled_when: {field: database, equals: postgres}
     produces: [database_url]
@@ -42,6 +51,13 @@ features:
     enabled_when: {field: database, equals: aura}
     requires: [aura_client_id, aura_client_secret]
     produces: [neo4j_uri, neo4j_password]
+
+  # --- front-ends ---------------------------------------------------------------
+
+  # A separate web front-end that talks to the API. It needs nothing beyond
+  # its hosting slot.
+  web:
+    enabled_when: {field: web, is_true: true}
 
   # EAS builds need an Expo access token in CI and Apple credentials for
   # signing and submission, configured once through EAS.
@@ -54,3 +70,17 @@ features:
   notifications:
     enabled_when: {field: notifications, is_true: true}
     requires: [expo_push_token]
+
+  # --- payments, a family: each member is its own overlay (ADR-022) -----------
+
+  # Rolling membership through Stripe Billing.
+  payments.subscriptions:
+    enabled_when: {field: payments, contains: subscriptions}
+    requires: [stripe_secret_key, stripe_publishable_key]
+    produces: [stripe_webhook_secret]
+
+  # One-off purchases through a PaymentIntent, fulfilled by webhook.
+  payments.checkout:
+    enabled_when: {field: payments, contains: checkout}
+    requires: [stripe_secret_key, stripe_publishable_key]
+    produces: [stripe_webhook_secret]

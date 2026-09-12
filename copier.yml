@@ -1,10 +1,10 @@
 # The question set. `loftline new` answers these from a loftline.yml spec and
 # never prompts; running `copier copy` by hand prompts for them instead.
 #
-# Nothing beyond these five until a real project demands it (CLAUDE.md). A new
+# Nothing is added here until a real project demands it (CLAUDE.md). A new
 # question is a deliberate schema change: it is added here, to the Spec model
-# in cli/loftline/models.py, and to features.yml, and versioned as ADR-001
-# requires.
+# in cli/loftline/models.py, and to features.yml, and recorded as an ADR
+# (ADR-001, ADR-022).
 
 _min_copier_version: "9.0.0"
 _subdirectory: template
@@ -58,7 +58,34 @@ mobile:
   default: false
   help: Include an Expo mobile app that signs in against the API.
 
+web:
+  type: bool
+  default: false
+  help: Include a web front-end that signs in against the API.
+
 notifications:
   type: bool
   default: false
   help: Push notifications through Expo. Adds the device registration endpoint and the sender.
+
+payments:
+  type: yaml
+  default: []
+  help: Payment modules, each its own overlay. Known - subscriptions, checkout.
+
+# --- hosting, one provider per slot (ADR-022) ---------------------------------
+
+hosting_api:
+  type: str
+  default: render
+  help: Where the API is hosted.
+  choices:
+    Render: render
+
+hosting_web:
+  type: str
+  default: render
+  help: Where the web front-end is hosted, if there is one.
+  choices:
+    Render (static site): render
+    Vercel: vercel

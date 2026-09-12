@@ -273,3 +273,40 @@ def test_descriptor_is_immutable() -> None:
 
     with pytest.raises(ValidationError):
         entry.vendor = "other"
+
+
+# --- ADR-022: families and hosting per component ------------------------------
+
+
+def test_spec_defaults_the_adr022_fields() -> None:
+    from .conftest import spec
+
+    s = spec()
+
+    assert s.web is False
+    assert s.payments == ()
+    assert s.hosting.api == "render"
+    assert s.hosting.web == "render"
+
+
+def test_spec_rejects_an_unknown_payment_module() -> None:
+    from .conftest import spec
+
+    with pytest.raises(ValidationError, match="unknown payments module"):
+        spec(payments=["paypal"])
+
+
+def test_spec_rejects_a_duplicate_payment_module() -> None:
+    from .conftest import spec
+
+    with pytest.raises(ValidationError, match="duplicates"):
+        spec(payments=["checkout", "checkout"])
+
+
+def test_spec_rejects_an_unknown_hosting_provider_or_slot() -> None:
+    from .conftest import spec
+
+    with pytest.raises(ValidationError):
+        spec(hosting={"api": "fly"})
+    with pytest.raises(ValidationError):
+        spec(hosting={"database": "render"})

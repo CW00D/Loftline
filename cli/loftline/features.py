@@ -5,11 +5,14 @@ interpreter over that data and names no feature. Adding a feature is an edit to
 a YAML file; it is not a code change, and it cannot become one without someone
 noticing.
 
-A selector takes one of three forms:
+A selector takes one of these forms:
 
-    {always: true}                        always enabled
-    {field: notifications, is_true: true} enabled by a boolean spec flag
-    {field: database, equals: aura}       enabled by a spec choice
+    {always: true}                            always enabled
+    {field: notifications, is_true: true}     a boolean spec flag
+    {field: database, equals: aura}           a spec choice
+    {field: hosting.api, equals: render}      a nested spec choice
+    {field: payments, contains: checkout}     membership of a spec list
+    {all_of: [<selector>, <selector>]}        every one of them
 """
 
 from __future__ import annotations
@@ -27,6 +30,28 @@ from .models import Spec
 FEATURES_FILE = Path(__file__).with_name("features.yml")
 
 
+def _spec_field_exists(dotted: str) -> bool:
+    """Whether `a.b` names a field, then a sub-field, on the spec model."""
+    model: type[BaseModel] = Spec
+    for part in dotted.split("."):
+        fields = model.model_fields
+        if part not in fields:
+            return False
+        annotation = fields[part].annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            model = annotation
+        else:
+            model = BaseModel  # a leaf; a further part will fail above
+    return True
+
+
+def _spec_value(spec: Spec, dotted: str) -> Any:  # noqa: ANN401 - walks a model
+    value: Any = spec
+    for part in dotted.split("."):
+        value = getattr(value, part)
+    return value
+
+
 class Selector(BaseModel):
     """A declarative condition evaluated against the spec."""
 
@@ -36,23 +61,36 @@ class Selector(BaseModel):
     field_name: str | None = Field(default=None, alias="field")
     equals: str | None = None
     is_true: bool | None = None
+    contains: str | None = None
+    all_of: tuple[Selector, ...] | None = None
 
     @model_validator(mode="after")
     def _check_exactly_one_form(self) -> Self:
-        if self.always is not None:
-            if self.field_name or self.equals or self.is_true is not None:
-                raise ValueError(
-                    "a selector states either always, or a field condition, not both"
-                )
+        tests = [t for t in (self.equals, self.is_true, self.contains) if t is not None]
+        present = (
+            self.always is not None,
+            bool(self.field_name),
+            self.all_of is not None,
+        )
+        forms = sum(1 for p in present if p)
+        if forms != 1:
+            raise ValueError(
+                "a selector states exactly one of: always, a field condition, or all_of"
+            )
+        if self.always is not None or self.all_of is not None:
+            if tests:
+                raise ValueError("equals, is_true and contains belong with a field")
+            if self.all_of is not None and not self.all_of:
+                raise ValueError("all_of needs at least one selector")
             return self
 
-        if not self.field_name:
-            raise ValueError("a selector needs either always or a field to test")
-        if (self.equals is None) == (self.is_true is None):
+        assert self.field_name is not None
+        if len(tests) != 1:
             raise ValueError(
-                f"field {self.field_name} needs exactly one of equals or is_true"
+                f"field {self.field_name} needs exactly one of "
+                "equals, is_true or contains"
             )
-        if self.field_name not in Spec.model_fields:
+        if not _spec_field_exists(self.field_name):
             raise ValueError(
                 f"selector names {self.field_name}, which is not a spec field. "
                 f"The spec fields are: {', '.join(sorted(Spec.model_fields))}"
@@ -62,10 +100,14 @@ class Selector(BaseModel):
     def matches(self, spec: Spec) -> bool:
         if self.always is not None:
             return self.always
+        if self.all_of is not None:
+            return all(s.matches(spec) for s in self.all_of)
         assert self.field_name is not None
-        value = getattr(spec, self.field_name)
+        value = _spec_value(spec, self.field_name)
         if self.is_true is not None:
             return bool(value) is self.is_true
+        if self.contains is not None:
+            return self.contains in value
         return bool(value == self.equals)
 
 

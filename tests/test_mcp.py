@@ -132,7 +132,10 @@ async def test_spec_schema_lists_the_questions() -> None:
         "package_name",
         "database",
         "mobile",
+        "web",
         "notifications",
+        "payments",
+        "hosting",
         "environments",
     }
 

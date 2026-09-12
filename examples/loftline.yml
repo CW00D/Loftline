@@ -5,3 +5,8 @@ database: postgres
 mobile: false
 notifications: false
 environments: [staging, production]
+web: false
+payments: []
+hosting:
+  api: render
+  web: render

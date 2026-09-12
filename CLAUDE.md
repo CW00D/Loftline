@@ -75,8 +75,10 @@ Violating any of these is a defect regardless of what was asked for.
 
 - Small commits with one concern each.
 - Do not add a template feature that has not been needed twice.
-- Do not add a spec question beyond `project_name`, `package_name`,
-  `database`, `mobile`, `notifications` until a real project demands it.
+- Do not add a spec question until a real project demands it. The current
+  set is `project_name`, `package_name`, `database`, `mobile`, `web`,
+  `notifications`, `payments` (a list; each member is its own overlay) and
+  `hosting` (one provider per component). Each addition is an ADR (ADR-022).
 - When a step's gate in `docs/roadmap.md` is not yet met, do not start the next
   step. The gates exist because later work is otherwise built on assumptions
   earlier work would have falsified.

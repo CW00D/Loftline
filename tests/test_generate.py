@@ -14,7 +14,7 @@ import yaml
 
 from loftline.errors import GenerateError
 from loftline.generate import TEMPLATE_ROOT, answers_for, generate
-from loftline.models import Spec
+from loftline.models import Hosting, Spec
 
 from .conftest import spec
 
@@ -59,7 +59,11 @@ def full(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def test_copier_asks_exactly_the_spec_questions() -> None:
-    """The five questions in copier.yml are the Spec's fields, minus environments."""
+    """The questions in copier.yml are the Spec's fields, minus environments.
+
+    `hosting` is a nested model in the spec and one flat question per slot in
+    Copier, since Copier questions are scalars and lists (ADR-022).
+    """
     questions = {
         key
         for key in yaml.safe_load(
@@ -67,8 +71,11 @@ def test_copier_asks_exactly_the_spec_questions() -> None:
         )
         if not key.startswith("_")
     }
+    hosting_questions = {f"hosting_{slot}" for slot in Hosting.model_fields}
 
-    assert questions == set(Spec.model_fields) - {"environments"}
+    spec_questions = set(Spec.model_fields) - {"environments", "hosting"}
+
+    assert questions == spec_questions | hosting_questions
 
 
 def test_answers_are_exactly_the_spec() -> None:
@@ -79,7 +86,11 @@ def test_answers_are_exactly_the_spec() -> None:
         "package_name": "beerreel",
         "database": "aura",
         "mobile": True,
+        "web": False,
         "notifications": False,
+        "payments": [],
+        "hosting_api": "render",
+        "hosting_web": "render",
     }
 
 
@@ -313,3 +324,31 @@ def test_overwrite_renders_into_a_non_empty_destination(tmp_path: Path) -> None:
 
     assert (dest / "README.md").is_file()
     assert (dest / "precious.txt").read_text(encoding="utf-8") == "kept"
+
+
+# --- ADR-022: hosting per component ------------------------------------------
+
+
+def test_the_render_blueprint_is_omitted_when_nothing_is_on_render(
+    tmp_path: Path,
+) -> None:
+    """A project hosted elsewhere must not carry a Render blueprint.
+
+    hosting.api has only one provider today, so the case is exercised through
+    the web slot: web on Vercel is not renderable yet and is refused, which is
+    the generator telling the truth rather than emitting a half-project.
+    """
+    elsewhere = spec(
+        project_name="elsewhere", database="aura", web=True, hosting={"web": "vercel"}
+    )
+    with pytest.raises(GenerateError, match=r"hosting\.web: vercel"):
+        generate(elsewhere, tmp_path / "elsewhere")
+
+
+def test_the_render_blueprint_path_is_conditional() -> None:
+    names = [p.name for p in (TEMPLATE_ROOT / "template").iterdir()]
+    blueprint = [n for n in names if n.endswith("render.yaml{% endif %}.jinja")]
+
+    assert len(blueprint) == 1
+    assert "hosting_api == 'render'" in blueprint[0]
+    assert "hosting_web == 'render'" in blueprint[0]

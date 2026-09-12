@@ -892,3 +892,61 @@ probed read-only with the stored keys before anything was designed.
 - A project with two hosted environments needs two databases. On any free
   tier that is one too many, and the provisioner says so rather than
   sharing one.
+
+---
+
+## ADR-022: Feature families and hosting per component
+
+**Status:** Accepted. Extends the spec schema; supersedes the "five questions"
+limit in CLAUDE.md, which two real projects have now demanded.
+
+**Context.** The second extraction, from UniSoc, brings a relational backend,
+a web front-end, Android, and Stripe payments. Two constraints were set
+before extracting: optional features that come in families must be
+independently selectable, because each module is a separately priced thing;
+and each hosted component must be able to live on a provider of the user's
+choosing, because the providers used so far were chosen for being free.
+
+**Decision.**
+
+1. **The spec gains three fields.** `web: bool`, `payments: list[str]` and
+   `hosting: {api, web}`. The question set is no longer fixed at five; it
+   is fixed at what real projects have demanded, and each addition is a
+   recorded schema change.
+2. **Families are lists; members are overlays.** `payments: [subscriptions,
+   checkout]` enables `payments.subscriptions` and `payments.checkout`, each
+   a conditional path with its own credentials, tests and configuration.
+   Nothing shared changes when one is enabled (invariant 6). A selector may
+   test membership: `{field: payments, contains: subscriptions}`.
+3. **Hosting is a choice per component.** `hosting.api` and `hosting.web`
+   each name a provider. Provider files are conditional paths keyed on those
+   answers: the Render blueprint exists only if a component is on Render.
+   The provisioner selects a client per slot. Selectors may read nested
+   fields: `{field: hosting.api, equals: render}`.
+4. **One provider per slot ships first.** Render for the API and the web
+   front-end, because both extractions target it. A second provider is a
+   new conditional path, a new client behind the same protocol, and a
+   descriptor set; the schema needs no change. Vercel for the web slot is
+   the expected first addition, since the site being extracted lives there.
+5. **The database's host follows the database.** `database: postgres` is a
+   Render Postgres created by the blueprint; `database: aura` is Aura. A
+   separate `hosting.database` slot is added when a second host for either
+   exists.
+
+**Consequences.**
+
+- `hosting.render` in the feature map becomes `hosting.api.render` and
+  `hosting.web.render`, each conditional on its slot. Selectors gain three
+  forms: a nested `field` (`hosting.api`), `contains` for lists, and
+  `all_of` for a conjunction.
+- Copier questions are scalars and lists, so the nested `hosting` field
+  becomes one flat question per slot: `hosting_api`, `hosting_web`.
+- The Spec accepts `hosting.web: vercel` so a plan can be made for it; the
+  generator refuses it until the files exist, as it does for postgres.
+- Stripe is one account per operator: `stripe_secret_key` and
+  `stripe_publishable_key` are global and held; `stripe_webhook_secret` is
+  produced when the endpoint is registered at provisioning.
+- Every overlay in a family documents its own variables in the module it
+  adds; the Render blueprint never lists them (ADR-016).
+- Pricing follows the module boundary. What a member pays for is a list of
+  overlays, which is also what the spec says.

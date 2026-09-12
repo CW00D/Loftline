@@ -86,8 +86,8 @@ def features() -> FeatureSet:
         {
             "version": 1,
             "features": {
-                "hosting.render": {
-                    "enabled_when": {"always": True},
+                "hosting.api.render": {
+                    "enabled_when": {"field": "hosting.api", "equals": "render"},
                     "requires": ["render_api_key"],
                     "produces": ["render_service_id"],
                 },

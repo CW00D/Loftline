@@ -139,12 +139,32 @@ class DescriptorSet(BaseModel):
         return self.entries.get(name)
 
 
+# The members of each feature family. A family is a list in the spec; each
+# member is an overlay (ADR-022). Adding a member here is a schema change.
+PAYMENT_MODULES = ("subscriptions", "checkout")
+
+
+class Hosting(BaseModel):
+    """Which provider hosts each component (ADR-022).
+
+    One provider per slot ships first. A value the template cannot render
+    yet is accepted here and refused by the generator, so a plan can still
+    be made for it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    api: Literal["render"] = "render"
+    web: Literal["render", "vercel"] = "render"
+
+
 class Spec(BaseModel):
     """`loftline.yml`.
 
-    The question set is fixed at the five in the roadmap plus environments.
-    `extra="forbid"` keeps it that way: a new question is a deliberate schema
-    change, not something that appears because a spec file mentioned it.
+    The question set is fixed at what real projects have demanded, and each
+    addition is a recorded schema change (ADR-001, ADR-022). `extra="forbid"`
+    keeps it that way: a new question does not appear because a spec file
+    mentioned it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -153,15 +173,26 @@ class Spec(BaseModel):
     package_name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     database: Literal["postgres", "aura"]
     mobile: bool = False
+    web: bool = False
     notifications: bool = False
+    payments: tuple[str, ...] = ()
+    hosting: Hosting = Hosting()
     environments: tuple[str, ...] = ("staging", "production")
 
     @model_validator(mode="after")
-    def _check_environments(self) -> Self:
+    def _check_lists(self) -> Self:
         if not self.environments:
             raise ValueError("environments must name at least one deployment target")
         if len(set(self.environments)) != len(self.environments):
             raise ValueError(f"environments contains duplicates: {self.environments}")
+        unknown = [m for m in self.payments if m not in PAYMENT_MODULES]
+        if unknown:
+            raise ValueError(
+                f"unknown payments module(s) {', '.join(unknown)}; "
+                f"known: {', '.join(PAYMENT_MODULES)}"
+            )
+        if len(set(self.payments)) != len(self.payments):
+            raise ValueError(f"payments contains duplicates: {self.payments}")
         return self
 
 

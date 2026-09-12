@@ -19,20 +19,25 @@ from .models import Spec
 # The repository root holds copier.yml; template/ is its `_subdirectory`.
 TEMPLATE_ROOT = Path(__file__).resolve().parents[2]
 
-# The database choices the template has a branch for. The Spec model accepts
-# more, because the resolver can plan a project the template cannot render
-# yet; that gap is closed by a second extraction (ADR-014), not a lie here.
+# What the template has a branch for. The Spec model accepts more, because
+# the resolver can plan a project the template cannot render yet; that gap
+# is closed by an extraction (ADR-014, ADR-022), not a lie here.
 RENDERABLE_DATABASES = ("aura",)
+RENDERABLE_WEB_HOSTS = ("render",)
 
 
 def answers_for(spec: Spec) -> dict[str, object]:
-    """The Copier answers a spec implies. Exactly the five questions."""
+    """The Copier answers a spec implies. One per question in copier.yml."""
     return {
         "project_name": spec.project_name,
         "package_name": spec.package_name,
         "database": spec.database,
         "mobile": spec.mobile,
+        "web": spec.web,
         "notifications": spec.notifications,
+        "payments": list(spec.payments),
+        "hosting_api": spec.hosting.api,
+        "hosting_web": spec.hosting.web,
     }
 
 
@@ -53,6 +58,11 @@ def generate(
             f"database: {spec.database} has no template branch yet. The base was "
             f"extracted from a graph-backed project; see ADR-014. "
             f"Renderable today: {', '.join(RENDERABLE_DATABASES)}."
+        )
+    if spec.web and spec.hosting.web not in RENDERABLE_WEB_HOSTS:
+        raise GenerateError(
+            f"hosting.web: {spec.hosting.web} has no template files yet (ADR-022). "
+            f"Renderable today: {', '.join(RENDERABLE_WEB_HOSTS)}."
         )
     destination = Path(destination)
     if destination.exists() and any(destination.iterdir()) and not overwrite:

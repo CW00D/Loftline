@@ -315,7 +315,7 @@ def test_disabled_features_contribute_nothing(
     )
 
     assert "expo_push_token" not in names(result.request)
-    assert result.features == ("database.postgres", "hosting.render")
+    assert result.features == ("database.postgres", "hosting.api.render")
 
 
 def test_enabling_a_feature_pulls_in_its_requirements(
