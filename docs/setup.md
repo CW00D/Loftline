@@ -160,3 +160,17 @@ Desktop. Then ask it: "What does a Loftline project need?"
 
 `loftline doctor` first, always. Every command checks the same
 preconditions and names the one that failed.
+
+
+## The dashboard
+
+The Loftline site (staging.loftline.org for now) shows your projects and your
+team's, and lets an administrator add collaborators to a project's repository
+without sharing any credential.
+
+1. Sign in with GitHub on the site, then Settings, Command line, Create token.
+2. `loftline login` and paste the token when asked. It goes into your vault.
+3. `loftline sync <spec> --repo OWNER/NAME --project <generated dir>` pushes
+   the project's spec and health up, and writes the collaborators the team
+   asked for into `<generated dir>/infra/terraform.tfvars`. `terraform apply`
+   there adds them; the next sync marks them as on the repository.

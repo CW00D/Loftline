@@ -1379,3 +1379,51 @@ it was being done by hand.
 - A `www.` name is not declared. Render redirects it to the apex on its
   own for verified apex domains; if a project wants it declared, it is a
   line in the blueprint.
+
+---
+
+## ADR-032: The dashboard holds intent, never a credential
+
+**Status:** Accepted. Extends ADR-014 (the hosted-vault position) and ADR-020.
+
+**Context.** A team wants to see its projects in one place and to add
+colleagues to them without handing out the vault. ADR-014 forbids the
+server holding any credential; ADR-001 forbids anything but deterministic
+tooling acting on the world.
+
+**Decision.**
+
+1. **The Loftline site is the dashboard, built on Loftline's own base.**
+   People, organisations with owners and members, projects owned by a
+   person or an org, and collaborators per project addressed by GitHub
+   login. Product code beside the template's, with its own migrations
+   numbered from 0100.
+2. **Sign in with GitHub, alongside email and password.** A user's GitHub
+   login is the identity a collaborator invitation needs. The one GitHub
+   token the site ever holds is used for a single profile read and
+   dropped. The site never calls GitHub for anything else.
+3. **The site stores intent; the administrator's machine acts.**
+   `loftline sync` pushes a project's spec (names and choices, refused if
+   a key looks like a value) and one health check per environment, and
+   pulls the collaborators the team asked for into the project's Terraform
+   variables. `terraform apply` on the administrator's machine, with the
+   administrator's token, makes them real; the next sync confirms them
+   against the repository through `gh` and marks them applied.
+4. **The command line signs in with a personal token,** created on the
+   dashboard and shown once, stored in the vault as `loftline_site_token`
+   by `loftline login`, hashed on the server, revocable there.
+
+**Consequences.**
+
+- Team members need no credential at all: CI holds the secrets, Render
+  holds the rest, and their repository access comes from being a
+  collaborator. A second administrator is a person given the vault, as a
+  password manager would be shared.
+- The site can show that an environment is unhealthy; it cannot fix it,
+  and that is the design.
+- A product's own credentials, such as the GitHub OAuth secret, sit
+  outside the feature map, so the provisioner does not write them; today
+  they are set on the service by hand. A per-project credentials file is
+  the obvious next step and is recorded, not built.
+- Production of the site needs a second redirect URI on the OAuth App;
+  no new app.
