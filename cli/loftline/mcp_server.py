@@ -294,12 +294,14 @@ def sync(
     assert descriptor.vault_path is not None
     store = _vault(config)
     client = SiteClient(store.get(descriptor.vault_path), site=DEFAULT_SITE)
+    project = _parse_spec(spec)
     report = sync_project(
-        _parse_spec(spec),
+        project,
         client,
         repository=repo,
         project_dir=Path(project_dir) if project_dir else None,
         org_slug=org,
+        resolution=resolve(project, descriptors, store.index()),
     )
     lines = [f"Synced {report.project}"]
     lines += [

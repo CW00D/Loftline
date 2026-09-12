@@ -222,3 +222,69 @@ def test_sync_without_a_project_directory_still_reports(tmp_path: Path) -> None:
     assert report.environments == (("staging", False),)
     assert report.tfvars is None
     assert report.pending == ("octocat",)
+
+
+def test_the_credential_plan_carries_names_states_and_commands_never_values(
+    tmp_path: Path,
+) -> None:
+    from loftline.resolve import Defer, Derive, Inject, Request, Resolution
+    from loftline.site import credentials_plan
+
+    resolution = Resolution(
+        inject=(
+            Inject("smtp_user", "loftline/google/smtp_user", "SMTP_USER", ("staging",)),
+        ),
+        derive=(
+            Derive("jwt_secret", "random_bytes_32_base64", "JWT_SECRET", ("staging",)),
+        ),
+        request=(
+            Request(
+                "render_api_key",
+                "1. dashboard.render.com",
+                "loftline/render/api_key",
+                "absent from vault",
+                "render",
+            ),
+        ),
+        defer=(
+            Defer(
+                "database_url", "render_postgres_create", "DATABASE_URL", ("staging",)
+            ),
+        ),
+    )
+
+    plan = credentials_plan(resolution)
+
+    assert [(p["name"], p["state"]) for p in plan] == [
+        ("smtp_user", "held"),
+        ("jwt_secret", "generated"),
+        ("render_api_key", "missing"),
+        ("database_url", "produced"),
+    ]
+    missing = plan[2]
+    assert missing["command"] == "loftline vault set render_api_key"
+    assert missing["link"] == "loftline://vault/set/render_api_key"
+    assert "dashboard.render.com" in missing["acquire"]
+    assert not any("value" in p for p in plan)
+
+
+def test_sync_sends_the_plan_and_the_summary_when_it_has_them(tmp_path: Path) -> None:
+    from loftline.resolve import Resolution
+
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "LOFTLINE.md").write_text("# shop\n\nWhat it is.\n", encoding="utf-8")
+    site = FakeSite()
+
+    sync_project(
+        shop(),
+        site,
+        repository="acme/shop",
+        project_dir=tmp_path,
+        resolution=Resolution(),
+        health=lambda url: True,
+        on_github=lambda repo: set(),
+    )
+
+    status = site.pushed[0]["status"]
+    assert status["credentials"] == []
+    assert status["summary"].startswith("# shop")

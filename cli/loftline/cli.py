@@ -22,16 +22,19 @@ from .bootstrap import init_vault, mcp_config
 from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
 from .generate import generate
-from .models import load_descriptors, load_spec
+from .models import Spec, load_descriptors, load_spec
 from .providers.aura import AuraClient
 from .providers.cloudflare import CloudflareClient
 from .providers.render import RenderClient
 from .providers.stripe import StripeClient
 from .provision import provision
+from .realise import RealiseError, spec_from_dashboard
+from .realise import realise as run_realise
 from .report import render_plan
 from .resolve import Derive, Inject, resolve
 from .secrets import GitHubSink, write_secrets
 from .site import DEFAULT_SITE, SiteClient, sync_project
+from .urlhandler import open_terminal, parse, register
 from .vault_sops import SopsAgeVault
 
 app = typer.Typer(
@@ -574,8 +577,15 @@ def sync(
         assert descriptor.vault_path is not None
         store = SopsAgeVault(config.vault_path)
         client = SiteClient(store.get(descriptor.vault_path), site=site)
+        project_spec = load_spec(spec)
+        resolution = resolve(project_spec, load_descriptors(credentials), store.index())
         report = sync_project(
-            load_spec(spec), client, repository=repo, project_dir=project, org_slug=org
+            project_spec,
+            client,
+            repository=repo,
+            project_dir=project,
+            org_slug=org,
+            resolution=resolution,
         )
     except LoftlineError as exc:
         _fail(str(exc))
@@ -590,3 +600,110 @@ def sync(
         typer.echo(f"  pending                {', '.join(report.pending) or 'none'}")
     for note in report.notes:
         typer.echo(f"  {note}")
+
+
+@app.command()
+def realise(
+    name: Annotated[str, typer.Argument(help="The project's name on the dashboard.")],
+    into: Annotated[
+        Path,
+        typer.Option("--into", help="A fresh directory to generate the project into."),
+    ],
+    org: Annotated[
+        str | None,
+        typer.Option(
+            "--org", help="Dashboard organisation slug the project belongs to."
+        ),
+    ] = None,
+    terraform: Annotated[
+        str | None,
+        typer.Option("--terraform", help="Path to terraform, if it is not on PATH."),
+    ] = None,
+    vault: VaultOption = None,
+    credentials: CredentialsOption = Path("credentials.yml"),
+    site: SiteOption = DEFAULT_SITE,
+) -> None:
+    """Make a project someone defined on the dashboard real.
+
+    Generates it, creates its repository with Terraform, pushes the code and
+    opens the promotion pull request, writes its secrets, and reports back.
+    Stops before the one step only a person can do: connecting the blueprint
+    on Render. Every credential stays on this machine.
+    """
+    config = VaultConfig.from_env(vault)
+    try:
+        require(config, Capability.DECRYPT)
+        assert config.vault_path is not None
+        descriptors = load_descriptors(credentials)
+        token_descriptor = descriptors["loftline_site_token"]
+        assert token_descriptor.vault_path is not None
+        store = SopsAgeVault(config.vault_path)
+        client = SiteClient(store.get(token_descriptor.vault_path), site=site)
+        pulled = client.pull_project(name, org_slug=org)
+        if not pulled.get("spec"):
+            _fail(f"{name} has no spec on the dashboard; define it there first.")
+        project_spec = spec_from_dashboard(dict(pulled["spec"]))
+        resolution = resolve(project_spec, descriptors, store.index())
+        if resolution.request:
+            names = ", ".join(r.name for r in resolution.request)
+            _fail(
+                f"{name} still needs {names}. The dashboard's project page lists how "
+                "to get each; store them with `loftline vault set <name>` and re-run."
+            )
+
+        def do_generate(s: Spec, directory: Path) -> Path:
+            return generate(s, directory)
+
+        def do_secrets(s: Spec, repository: str) -> None:
+            sink = GitHubSink(repository)
+            sink.preflight()
+            for environment_name in s.environments:
+                sink.ensure_environment(environment_name)
+            write_secrets(resolve(s, descriptors, store.index()), store, sink)
+
+        report = run_realise(
+            project_spec,
+            into,
+            generate=do_generate,
+            write_secrets=do_secrets,
+            terraform=terraform,
+        )
+        sync_project(
+            project_spec,
+            client,
+            repository=report.repository,
+            project_dir=report.directory,
+            org_slug=org,
+            resolution=resolution,
+        )
+    except (LoftlineError, RealiseError) as exc:
+        _fail(str(exc))
+    except KeyError:
+        _fail("credentials.yml has no loftline_site_token descriptor.")
+    typer.echo(f"Realised {report.project} at {report.directory}")
+    for step in report.steps:
+        typer.echo(f"  {step.name:11} {step.detail}")
+    typer.echo(f"  next        {report.next_step}")
+
+
+@app.command("url", hidden=True)
+def url_command(
+    link: Annotated[
+        str, typer.Argument(help="A loftline:// link, as the OS hands it over.")
+    ],
+) -> None:
+    """Open a terminal for a loftline:// link. Called by the operating system."""
+    try:
+        open_terminal(parse(link))
+    except LoftlineError as exc:
+        _fail(str(exc))
+
+
+@app.command("register-url-handler")
+def register_url_handler() -> None:
+    """Make loftline:// links open this CLI, so the dashboard's Store buttons
+    open a terminal already running `loftline vault set <name>`."""
+    try:
+        typer.echo(register())
+    except LoftlineError as exc:
+        _fail(str(exc))

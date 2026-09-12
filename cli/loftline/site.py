@@ -32,6 +32,7 @@ from .errors import LoftlineError
 from .models import Spec
 from .providers import Transport, decode, urllib_transport
 from .provision import hostnames, service_name, web_service_name
+from .resolve import Resolution
 
 # Where the dashboard's API lives. Production, when it exists, is
 # https://api.loftline.org; until then the staging site is the site.
@@ -79,6 +80,10 @@ class SiteClient:
 
     def me(self) -> dict[str, Any]:
         return dict(self._call("GET", "/sync/me"))
+
+    def wanted(self) -> list[dict[str, Any]]:
+        """Projects defined on the dashboard and not yet generated."""
+        return list(self._call("GET", "/sync/wanted"))
 
     def push_project(
         self,
@@ -133,7 +138,57 @@ class SiteLike(Protocol):
     ) -> None: ...
 
 
-# --- what goes up: the spec and the live status -------------------------------
+# --- what goes up: the spec, the live status, the credential plan --------------
+
+
+def credentials_plan(resolution: Resolution) -> list[dict[str, Any]]:
+    """The plan as the dashboard shows it: each credential's name, state and
+    how to get it, with the exact command to store it. Never a value."""
+    plan: list[dict[str, Any]] = []
+    for held in resolution.inject:
+        plan.append(
+            {"name": held.name, "state": "held", "github_secret": held.github_secret}
+        )
+    for derived in resolution.derive:
+        plan.append(
+            {
+                "name": derived.name,
+                "state": "generated",
+                "github_secret": derived.github_secret,
+            }
+        )
+    for wanted in resolution.request:
+        plan.append(
+            {
+                "name": wanted.name,
+                "state": "missing",
+                "vendor": wanted.vendor,
+                "reason": wanted.reason,
+                "acquire": wanted.acquire,
+                "command": f"loftline vault set {wanted.name}",
+                "link": f"loftline://vault/set/{wanted.name}",
+            }
+        )
+    for deferred in resolution.defer:
+        plan.append(
+            {
+                "name": deferred.name,
+                "state": "produced",
+                "produced_by": deferred.produced_by,
+                "github_secret": deferred.github_secret,
+            }
+        )
+    return plan
+
+
+def project_summary(project_dir: Path | None) -> str | None:
+    """The project's LOFTLINE.md, if the directory has one."""
+    if project_dir is None:
+        return None
+    path = project_dir / "LOFTLINE.md"
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")[:4000]
 
 
 def spec_summary(spec: Spec) -> dict[str, Any]:
@@ -271,12 +326,18 @@ def sync_project(
     repository: str | None,
     project_dir: Path | None,
     org_slug: str | None = None,
+    resolution: Resolution | None = None,
     health: Callable[[str], bool] = http_health,
     on_github: Callable[[str], set[str]] = github_collaborators,
 ) -> SyncReport:
     """Push the project up, pull its collaborators down, and say what is left
     for the administrator to apply."""
     status = live_status(spec, health=health)
+    if resolution is not None:
+        status["credentials"] = credentials_plan(resolution)
+    summary = project_summary(project_dir)
+    if summary:
+        status["summary"] = summary
     site.push_project(
         spec.project_name,
         repository=repository,

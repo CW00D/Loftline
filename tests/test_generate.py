@@ -137,6 +137,7 @@ def test_answers_are_exactly_the_spec() -> None:
 def test_the_base_renders_the_skeleton(minimal: Path) -> None:
     for expected in [
         "README.md",
+        "LOFTLINE.md",
         "docker-compose.yml",
         "render.yaml",
         ".gitignore",
