@@ -1427,3 +1427,54 @@ tooling acting on the world.
   the obvious next step and is recorded, not built.
 - Production of the site needs a second redirect URI on the OAuth App;
   no new app.
+
+---
+
+## ADR-033: Defined on the dashboard, realised on the administrator's machine
+
+**Status:** Accepted. Extends ADR-032.
+
+**Context.** A team wants to define a project on the dashboard and have it
+appear, and to see which credentials it needs and how to get them. ADR-032
+keeps every credential and every side effect on the administrator's
+machine, so "create it here" cannot mean the server creating anything.
+
+**Decision.**
+
+1. **The dashboard authors the spec.** The same questions the CLI asks, the
+   same shape check; the project is recorded as defined and not yet
+   generated. A spec with an unknown field, or a field whose name looks
+   like a value, is refused.
+2. **`loftline realise <name>` makes it real.** On the administrator's
+   machine it pulls the spec, refuses if any credential is still missing,
+   then generates, creates the repository with Terraform, commits on top of
+   the first commit and pushes, opens the promotion pull request with
+   auto-merge, writes the secrets, and syncs back. It stops before the one
+   step only a person can do, connecting the blueprint, and prints it. Every
+   external command goes through an injectable runner, so the sequence is
+   tested without Terraform, git or GitHub.
+3. **The credential plan is on the project page, names only.** `sync`
+   reports each credential's state (held, generated, missing, produced),
+   the acquire steps for a missing one, and the exact `loftline vault set`
+   command. The page offers to copy the command or to open it through a
+   `loftline://vault/set/<name>` link, which the CLI registers as a URL
+   handler and answers by opening a terminal already running the command.
+   The link carries a name; the value goes into the terminal's hidden
+   prompt and nowhere else.
+4. **Membership follows ownership.** A personal project's collaborators are
+   whoever its owner names. An organisation's project takes only the
+   organisation's members, and can take all of them at once
+   (`auto_members`). Outsiders join the organisation first, which is an
+   owner's decision, not a project's.
+5. **A project describes itself.** The template emits `LOFTLINE.md`, a
+   short generated summary of what the project is; `sync` sends it up and
+   the project page shows it.
+
+**Consequences.**
+
+- The dashboard's spec form and the CLI's questions are kept in step by
+  hand; the CLI's validation is the truth and runs at `realise`.
+- macOS cannot register the URL scheme without an application bundle; the
+  Copy button is the fallback there and everywhere.
+- Product migrations in the site are numbered from 0100 so a template
+  overlay added later never collides.
