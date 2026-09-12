@@ -22,7 +22,7 @@ TEMPLATE_ROOT = Path(__file__).resolve().parents[2]
 # What the template has a branch for. The Spec model accepts more, because
 # the resolver can plan a project the template cannot render yet; that gap
 # is closed by an extraction (ADR-014, ADR-022), not a lie here.
-RENDERABLE_DATABASES = ("aura",)
+RENDERABLE_DATABASES = ("postgres", "aura")
 RENDERABLE_WEB_HOSTS = ("render",)
 
 
@@ -55,8 +55,7 @@ def generate(
     """
     if spec.database not in RENDERABLE_DATABASES:
         raise GenerateError(
-            f"database: {spec.database} has no template branch yet. The base was "
-            f"extracted from a graph-backed project; see ADR-014. "
+            f"database: {spec.database} has no template branch yet (ADR-023). "
             f"Renderable today: {', '.join(RENDERABLE_DATABASES)}."
         )
     if spec.web and spec.hosting.web not in RENDERABLE_WEB_HOSTS:

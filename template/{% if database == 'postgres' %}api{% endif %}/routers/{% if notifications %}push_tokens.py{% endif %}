@@ -1,0 +1,44 @@
+"""Device registration for push notifications.
+
+Overlay: present only when the project enables notifications. The app calls
+POST /me/push-token after sign-in whether or not this overlay exists, and
+treats a 404 as "this project does not do push". That is what lets the app
+be one artefact rather than two.
+
+The column lives in migrations/versions/0002_push_token.py, owned by this
+overlay; tables.py is shared and does not mention it, which is why the
+statements here are SQL rather than attributes on the User model.
+"""
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+
+from db import get_session
+from routers.auth import current_user
+
+router = APIRouter()
+
+
+class PushTokenRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/me/push-token")
+def set_push_token(body: PushTokenRequest, user=Depends(current_user)):
+    with get_session() as session:
+        session.execute(
+            text("UPDATE users SET push_token = :token WHERE id = :id"),
+            {"token": body.token, "id": user.id},
+        )
+        session.commit()
+    return {"ok": True}
+
+
+@router.delete("/me/push-token")
+def clear_push_token(user=Depends(current_user)):
+    with get_session() as session:
+        session.execute(
+            text("UPDATE users SET push_token = NULL WHERE id = :id"), {"id": user.id}
+        )
+        session.commit()
+    return {"ok": True}

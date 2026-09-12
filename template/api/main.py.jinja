@@ -1,7 +1,6 @@
 import importlib
 import logging
 import pkgutil
-import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -9,33 +8,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI
-from neo4j.exceptions import ServiceUnavailable
 
 import db
 import routers
-from schema import ensure_schema
 
 logger = logging.getLogger("app.main")
 
 # How long to wait for the database at boot before giving up. Under docker
-# compose the API container can win the race against Neo4j's own startup even
-# with a health check in front of it; on a hosted platform a deploy that boots
-# before the database is reachable should fail loudly rather than serve 500s.
+# compose the API container can win the race against the database's own
+# startup even with a health check in front of it; on a hosted platform a
+# deploy that boots before the database is reachable should fail loudly rather
+# than serve 500s.
 DB_WAIT_SECONDS = 60
-
-
-def _wait_for_database() -> None:
-    deadline = time.monotonic() + DB_WAIT_SECONDS
-    while True:
-        try:
-            with db.get_session() as session:
-                session.run("RETURN 1").consume()
-            return
-        except ServiceUnavailable:
-            if time.monotonic() >= deadline:
-                raise
-            logger.warning("database not reachable yet; retrying")
-            time.sleep(2)
 
 
 def _include_routers(app: FastAPI) -> None:
@@ -55,12 +39,13 @@ def _include_routers(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _wait_for_database()
-    with db.get_session() as session:
-        # Idempotent; this is the migration step. See schema.py.
-        ensure_schema(session)
+    # This file is the same whichever database the project uses. The database
+    # module is the branch: it provides these four calls and get_session, and
+    # nothing else here knows which store is behind them.
+    db.wait_until_reachable(DB_WAIT_SECONDS)
+    db.migrate()
     yield
-    db.close_driver()
+    db.close()
 
 
 app = FastAPI(title="{{ project_name }} API", lifespan=lifespan)
@@ -69,11 +54,8 @@ _include_routers(app)
 
 @app.get("/health")
 def health():
-    # Touches the graph so an external uptime ping also counts as database
-    # activity: free Aura instances pause after three idle days.
     try:
-        with db.get_session() as session:
-            session.run("RETURN 1").consume()
+        db.ping()
         return {"ok": True, "db": True}
     except Exception:
         return {"ok": True, "db": False}

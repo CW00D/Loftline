@@ -1,0 +1,99 @@
+# The one CI workflow. Lints and tests the API against a real Postgres on
+# every push to a long-lived branch and on every pull request.
+#
+# This file is copied into generated projects byte for byte, never rendered:
+# ${{ }} is GitHub's syntax and must not meet a template engine. Per-project
+# variation belongs in repository variables, not in this file.
+name: CI
+
+on:
+  push:
+    branches: [dev, staging, prod]
+  pull_request:
+  # Re-run by hand from the Actions tab.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: api
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: localdev
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 24
+
+    env:
+      DATABASE_URL: postgresql://app:localdev@localhost:5432/app
+      JWT_SECRET: ci-only-not-a-secret-ci-only-not-a-secret-xx
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+      - name: Build the image
+        # The Dockerfile is what the host deploys. A green test run against a
+        # broken build is not green.
+        run: docker build -t api .
+
+  secrets:
+    # On a deploying branch, run inside its GitHub environment and confirm the
+    # secrets Loftline wrote are there. Nothing is printed; presence is the
+    # whole check. A deploying branch with no secrets is broken, and this is
+    # where that shows up rather than in a failed deploy.
+    if: github.event_name == 'push' && (github.ref_name == 'staging' || github.ref_name == 'prod')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ${{ github.ref_name == 'prod' && 'production' || 'staging' }}
+    steps:
+      - name: Confirm the environment's secrets are present
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          missing=0
+          for name in JWT_SECRET SMTP_USER SMTP_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "$name is not set for this environment"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Run: loftline secrets write <spec> --repo ${GITHUB_REPOSITORY}"
+            exit 1
+          fi
+          echo "All present. Values are not shown."

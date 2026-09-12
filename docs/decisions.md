@@ -950,3 +950,95 @@ choosing, because the providers used so far were chosen for being free.
   adds; the Render blueprint never lists them (ADR-016).
 - Pricing follows the module boundary. What a member pays for is a list of
   overlays, which is also what the spec says.
+
+---
+
+## ADR-023: The database branch is a directory
+
+**Status:** Accepted. Delivers what ADR-014 point 3 and ADR-016 point 5
+deferred; supersedes both.
+
+**Context.** The relational branch was extracted from UniSoc, a FastAPI
+backend on SQLAlchemy 2, Alembic and Postgres. Invariant 6 says optional
+features are conditional paths, never conditional blocks in shared files.
+The database is not an optional feature but the one exclusive choice
+(ADR-004), and it decides the shape of the whole data layer: the driver, the
+schema mechanism, the user store queries, the seed, the test fixtures, the
+compose file and the CI service container. Two questions had to be settled:
+where the branch lives in the template, and how much of the API is allowed
+to differ between branches.
+
+**Decision.**
+
+1. **Each database choice is a directory of the template.** The template
+   holds `api/` for what is shared and one sibling per choice,
+   `{% if database == 'postgres' %}api{% endif %}/` and
+   `{% if database == 'aura' %}api{% endif %}/`, which Copier renders into
+   the same `api/`. The compose file and the CI workflow follow the same
+   rule. What is in the choice's directory is the branch; what is in `api/`
+   is shared and identical whichever database is chosen, which a test
+   asserts byte for byte.
+2. **`main.py` is shared, and talks to the database through five calls.**
+   Each branch's `db.py` provides `get_session`, `wait_until_reachable`,
+   `migrate`, `ping` and `close`. The app, the router discovery, the boot
+   sequence and `/health` are the same file for both. The graph branch's
+   boot logic moved from `main.py` into its `db.py` to make this so.
+3. **The API contract is the same across branches.** `routers/auth.py`
+   exists per branch because it is the user store, but its endpoints,
+   bodies and answers are identical, and `tests/test_api.py` is shared:
+   it is the contract, and it runs unchanged against either database. The
+   mobile app and the web front-end are written against that contract, not
+   against a database.
+4. **Migrations are Alembic, applied on every boot.** `tables.py` is the
+   single source of truth and `migrations/versions/` is derived from it by
+   `alembic revision --autogenerate`; the first migration is written by
+   hand to match. `db.migrate()` runs `upgrade head` in the lifespan, the
+   same place the graph branch applies its constraints, so development and
+   production cannot drift. Alembic's logging configuration is not loaded,
+   because it would replace the API's.
+5. **An overlay that needs a column owns a migration and a `tables_<name>.py`
+   module, not a line in `tables.py`.** The notifications overlay adds
+   `migrations/versions/{% if notifications %}0002_push_token.py{% endif %}`,
+   which creates the column, and `{% if notifications %}tables_push.py{% endif %}`,
+   which appends it to the shared table's metadata so that `alembic
+   revision --autogenerate` sees it rather than proposing to drop it.
+   `migrations/env.py` imports every `tables_*.py` module, the same
+   discovery `main.py` does for routers. The overlay's router writes the
+   column with SQL rather than an attribute on the model. `tables.py` stays
+   shared; enabling notifications changes nothing shared, which is
+   invariant 6 applied inside a branch. `alembic check` passes with the
+   overlay on and with it off.
+6. **The tests run against a real Postgres**, the one Docker Compose and the
+   CI service container start, wipe it, and refuse anything that is not a
+   local host. UniSoc tested on in-memory SQLite; that was not carried over,
+   because SQLite hides the constraint names, timezone handling and
+   `server_default`s that the branch relies on.
+7. **Two shared files carry conditional blocks, deliberately.** The Render
+   blueprint is one file by Render's design and gains a `databases:` block
+   and a `fromDatabase` variable when the database is Postgres, so the
+   database is created alongside the services and its connection string
+   never passes through Loftline. The README is prose. Both are keyed on a
+   single answer, each block is complete in itself, and generation tests
+   render every combination. Nothing executable has a conditional block.
+8. **What was left behind.** UniSoc's email verification step, its
+   asyncio email worker, rate limiting with `slowapi`, Azure blob storage,
+   Sentry and the hard-coded signing key. Verification and rate limiting
+   have each been needed once and are candidates for overlays; the worker
+   duplicates the base's daemon-thread sender; the key was never a
+   candidate. The Stripe customer created at registration belongs to the
+   payments family, not to auth.
+
+**Consequences.**
+
+- `database: postgres` is the default choice in `copier.yml` and renders.
+  The generator's refusal remains for a choice with no directory.
+- Staging's Render Postgres is on the free plan, which Render deletes after
+  thirty days; prod's is the smallest paid plan. The blueprint says so.
+- A machine with its own Postgres on 5432 answers instead of the container.
+  The compose file, `.env.example` and the test refusal all say so, because
+  the failure looks like a wrong password rather than a wrong database.
+- A third database is a third directory and a `db.py` with the same five
+  calls. The shared-files test is what keeps it honest.
+- `hosting.database` (ADR-022 point 5) is still not a question: the
+  database's host follows the database, Render for Postgres and Aura for
+  Aura.

@@ -1,7 +1,10 @@
+{#- The blueprint is one file by Render's design, so it is the one place a
+    spec choice appears as a block rather than a path (ADR-023). Each block
+    is keyed on a single answer and is complete in itself. -#}
 # Render blueprint. Connect once by hand: dashboard, New, Blueprint, pick this
-# repository. Render then manages both services from this file.
+# repository. Render then manages everything in this file.
 #
-# Two services, one per deploying branch (ADR-013 in Loftline): `staging`
+# Two of each, one per deploying branch (ADR-013 in Loftline): `staging`
 # tracks the staging branch, `prod` tracks the prod branch. Promotion is a
 # merge from one branch to the next, never a cherry-pick.
 #
@@ -12,6 +15,24 @@
 #
 # Starter plan: always-on, no cold starts. The free tier sleeps after fifteen
 # idle minutes and takes 30 to 60 seconds to wake.
+{%- if database == 'postgres' %}
+#
+# The database is created here too, one per environment, and its connection
+# string is handed to the service by Render; DATABASE_URL never passes through
+# anything else. Staging is on the free plan, which Render deletes after 30
+# days unless upgraded: fine for disposable data, which is what staging holds.
+# Prod is the smallest paid plan.
+databases:
+  - name: {{ project_name }}-db-staging
+    plan: free
+    databaseName: app
+    user: app
+
+  - name: {{ project_name }}-db-prod
+    plan: basic-256mb
+    databaseName: app
+    user: app
+{%- endif %}
 services:
   - type: web
     name: {{ project_name }}-api-staging
@@ -23,12 +44,19 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+{%- if database == 'aura' %}
       - key: NEO4J_URI
         sync: false
       - key: NEO4J_USER
         sync: false
       - key: NEO4J_PASSWORD
         sync: false
+{%- elif database == 'postgres' %}
+      - key: DATABASE_URL
+        fromDatabase:
+          name: {{ project_name }}-db-staging
+          property: connectionString
+{%- endif %}
       - key: JWT_SECRET
         sync: false
       - key: SMTP_USER
@@ -46,12 +74,19 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+{%- if database == 'aura' %}
       - key: NEO4J_URI
         sync: false
       - key: NEO4J_USER
         sync: false
       - key: NEO4J_PASSWORD
         sync: false
+{%- elif database == 'postgres' %}
+      - key: DATABASE_URL
+        fromDatabase:
+          name: {{ project_name }}-db-prod
+          property: connectionString
+{%- endif %}
       - key: JWT_SECRET
         sync: false
       - key: SMTP_USER

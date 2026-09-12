@@ -55,6 +55,21 @@ def full(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
 
 
+@pytest.fixture(scope="module")
+def postgres(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The relational database branch, with the notifications overlay."""
+    dest = tmp_path_factory.mktemp("postgres") / "relapi"
+    return generate(
+        spec(
+            project_name="relapi",
+            package_name="relapi",
+            database="postgres",
+            notifications=True,
+        ),
+        dest,
+    )
+
+
 # --- the question set --------------------------------------------------------
 
 
@@ -125,14 +140,14 @@ def test_the_placeholder_name_is_gone(minimal: Path) -> None:
     assert leftovers == set()
 
 
-def test_nothing_is_left_unrendered(minimal: Path, full: Path) -> None:
+def test_nothing_is_left_unrendered(minimal: Path, full: Path, postgres: Path) -> None:
     """No Jinja that Copier should have consumed survives.
 
     A bare `{{` is not evidence: JSX writes `style={{ flex: 1 }}` and GitHub
     writes `${{ secrets.X }}`. What must be gone is every template variable
     and every statement tag.
     """
-    for root in (minimal, full):
+    for root in (minimal, full, postgres):
         for path, text in rendered_text_files(root).items():
             assert "{%" not in text, path
             for variable in ("project_name", "package_name", "_copier"):
@@ -146,8 +161,8 @@ def test_the_project_name_reaches_the_hosting_blueprint(minimal: Path) -> None:
     assert "name: plainapi-api-prod" in blueprint
 
 
-def test_no_jinja_suffix_survives(minimal: Path, full: Path) -> None:
-    for root in (minimal, full):
+def test_no_jinja_suffix_survives(minimal: Path, full: Path, postgres: Path) -> None:
+    for root in (minimal, full, postgres):
         assert not list(root.rglob("*.jinja"))
 
 
@@ -167,11 +182,18 @@ def test_the_answers_file_is_emitted_and_not_gitignored(minimal: Path) -> None:
     assert "copier-answers" not in gitignore
 
 
-def test_workflows_are_copied_byte_for_byte(minimal: Path, full: Path) -> None:
+def test_workflows_are_copied_byte_for_byte(
+    minimal: Path, full: Path, postgres: Path
+) -> None:
     """Invariant 5: `${{ secrets.X }}` must never meet a template engine."""
-    ci = (WORKFLOWS / "ci.yml").read_bytes()
-    assert (minimal / ".github/workflows/ci.yml").read_bytes() == ci
-    assert (full / ".github/workflows/ci.yml").read_bytes() == ci
+    aura_ci = (WORKFLOWS / "{% if database == 'aura' %}ci.yml{% endif %}").read_bytes()
+    assert (minimal / ".github/workflows/ci.yml").read_bytes() == aura_ci
+    assert (full / ".github/workflows/ci.yml").read_bytes() == aura_ci
+
+    postgres_ci = (
+        WORKFLOWS / "{% if database == 'postgres' %}ci.yml{% endif %}"
+    ).read_bytes()
+    assert (postgres / ".github/workflows/ci.yml").read_bytes() == postgres_ci
 
     eas = next(WORKFLOWS.glob("*eas-build-staging.yml*")).read_bytes()
     assert (full / ".github/workflows/eas-build-staging.yml").read_bytes() == eas
@@ -294,14 +316,108 @@ def test_terraform_state_is_never_tracked(minimal: Path) -> None:
         assert pattern in ignored
 
 
+# --- the database branch is a directory (ADR-023) -----------------------------
+
+
+def test_the_postgres_branch_renders_its_own_data_layer(postgres: Path) -> None:
+    for expected in [
+        "api/db.py",
+        "api/tables.py",
+        "api/alembic.ini",
+        "api/migrations/env.py",
+        "api/migrations/script.py.mako",
+        "api/migrations/versions/0001_users.py",
+        "api/migrations/versions/0002_push_token.py",
+        "api/tables_push.py",
+        "api/routers/auth.py",
+        "api/routers/push_tokens.py",
+        "api/tests/conftest.py",
+        "api/tests/test_push.py",
+        "api/.env.example",
+        "api/requirements.txt",
+        "docker-compose.yml",
+        ".github/workflows/ci.yml",
+    ]:
+        assert (postgres / expected).is_file(), expected
+    # Nothing of the graph branch leaks across.
+    assert not (postgres / "api/schema.py").exists()
+    requirements = (postgres / "api/requirements.txt").read_text(encoding="utf-8")
+    assert "neo4j" not in requirements
+    assert "sqlalchemy" in requirements
+    compose = (postgres / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "postgres:16" in compose
+
+
+def test_the_aura_branch_has_no_relational_files(minimal: Path) -> None:
+    assert not (minimal / "api/tables.py").exists()
+    assert not (minimal / "api/migrations").exists()
+    assert not (minimal / "api/alembic.ini").exists()
+
+
+def test_the_push_token_migration_is_an_overlay(tmp_path: Path) -> None:
+    project = generate(
+        spec(project_name="quiet", database="postgres", notifications=False),
+        tmp_path / "quiet",
+    )
+
+    assert (project / "api/migrations/versions/0001_users.py").is_file()
+    assert not (project / "api/migrations/versions/0002_push_token.py").exists()
+    assert not (project / "api/tables_push.py").exists()
+    assert not (project / "api/routers/push_tokens.py").exists()
+
+
+def test_shared_files_are_identical_across_databases(
+    minimal: Path, postgres: Path
+) -> None:
+    """The database is a directory; what is outside it does not change."""
+    for path in [
+        "api/security.py",
+        "api/models.py",
+        "api/config.py",
+        "api/Dockerfile",
+        "api/pyproject.toml",
+        "api/requirements-dev.txt",
+        "api/routers/__init__.py",
+        "api/tests/test_api.py",
+        ".gitignore",
+    ]:
+        assert (minimal / path).read_bytes() == (postgres / path).read_bytes(), path
+
+    minimal_main = (minimal / "api/main.py").read_text(encoding="utf-8")
+    postgres_main = (postgres / "api/main.py").read_text(encoding="utf-8")
+    assert minimal_main.replace("plainapi", "X") == postgres_main.replace("relapi", "X")
+
+
+def test_the_blueprint_creates_a_render_postgres_per_environment(
+    postgres: Path,
+) -> None:
+    blueprint = yaml.safe_load((postgres / "render.yaml").read_text(encoding="utf-8"))
+
+    assert [d["name"] for d in blueprint["databases"]] == [
+        "relapi-db-staging",
+        "relapi-db-prod",
+    ]
+    staging = next(
+        s for s in blueprint["services"] if s["name"] == "relapi-api-staging"
+    )
+    url = next(v for v in staging["envVars"] if v["key"] == "DATABASE_URL")
+    assert url["fromDatabase"] == {
+        "name": "relapi-db-staging",
+        "property": "connectionString",
+    }
+    assert not any(v["key"].startswith("NEO4J") for v in staging["envVars"])
+
+
+def test_the_aura_blueprint_creates_no_database(minimal: Path) -> None:
+    blueprint = yaml.safe_load((minimal / "render.yaml").read_text(encoding="utf-8"))
+
+    assert "databases" not in blueprint
+    keys = {v["key"] for v in blueprint["services"][0]["envVars"]}
+    assert "NEO4J_URI" in keys
+    assert "DATABASE_URL" not in keys
+
+
 # --- refusals ----------------------------------------------------------------
-
-
-def test_a_database_with_no_template_branch_is_refused(tmp_path: Path) -> None:
-    with pytest.raises(GenerateError, match="postgres"):
-        generate(spec(database="postgres"), tmp_path / "out")
-
-    assert not (tmp_path / "out").exists()
 
 
 def test_a_non_empty_destination_is_refused(tmp_path: Path) -> None:

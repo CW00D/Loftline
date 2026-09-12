@@ -19,6 +19,7 @@ ignore = ["E402", "B008"]
 # .jinja files that ruff cannot see as modules.
 known-first-party = [
     "config", "db", "emails", "main", "models", "push", "routers", "schema", "security",
+    "tables",
 ]
 
 [tool.ruff.lint.per-file-ignores]

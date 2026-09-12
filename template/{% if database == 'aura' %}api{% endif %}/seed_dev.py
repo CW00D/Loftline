@@ -38,7 +38,7 @@ def run():
         print("wiping database")
         s.run("MATCH (n) DETACH DELETE n").consume()
 
-        # Exactly what main.lifespan does.
+        # Exactly what db.migrate does at boot.
         ensure_schema(s)
 
         pw = hash_password(PASSWORD)
@@ -56,4 +56,4 @@ def run():
 
 if __name__ == "__main__":
     run()
-    db.close_driver()
+    db.close()

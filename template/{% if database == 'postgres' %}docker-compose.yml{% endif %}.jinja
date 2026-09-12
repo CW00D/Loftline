@@ -1,0 +1,49 @@
+# The complete system, locally, with no external dependency.
+#
+#   docker compose up -d             # start Postgres and the API
+#   docker compose up -d postgres    # just the database, to run the API with uvicorn
+#   docker compose down              # stop, keeping the data
+#   docker compose down -v           # stop and wipe the dev data
+#
+# The API is at http://localhost:8000. Postgres is on localhost:5432 as
+# app / localdev, database app. Seed a dev user with `python api/seed_dev.py`.
+#
+# This is ONLY the development system. Production credentials are written to
+# the host by Loftline and never appear here.
+services:
+  postgres:
+    image: postgres:16
+    container_name: {{ project_name }}-postgres-dev
+    ports:
+      # host:container. A Postgres already installed on the machine owns
+      # 5432 and answers instead of this one; if so, use another host port
+      # here (say 5433:5432) and in api/.env. The API container is unaffected:
+      # it reaches the database by service name on the container port.
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: app
+    volumes:
+      - {{ package_name }}_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  api:
+    build: ./api
+    container_name: {{ project_name }}-api-dev
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://app:localdev@postgres:5432/app
+      # Development only. Loftline generates the real one per project.
+      JWT_SECRET: dev-only-not-a-secret-dev-only-not-a-secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  {{ package_name }}_dev_data:

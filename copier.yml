@@ -46,11 +46,10 @@ package_name:
 
 database:
   type: str
-  help: The database slot, the one exclusive choice (ADR-004).
-  default: aura
+  help: The database slot, the one exclusive choice (ADR-004). Each choice is a directory of the template (ADR-023).
+  default: postgres
   choices:
-    # The base was extracted from a graph-backed project. A relational branch
-    # is a second extraction, not an edit of this one (ADR-014).
+    Postgres, with SQLAlchemy and Alembic: postgres
     Neo4j Aura, a graph database: aura
 
 mobile:

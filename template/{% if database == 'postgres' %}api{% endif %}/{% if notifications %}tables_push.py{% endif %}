@@ -1,0 +1,15 @@
+"""The notifications overlay's column on the users table.
+
+Overlay: present only when the project enables notifications.
+
+The column was created by migrations/versions/0002_push_token.py. It is
+appended to the shared table here so Alembic's autogenerate knows it exists;
+without this, the next `alembic revision --autogenerate` would propose
+dropping it. migrations/env.py imports every `tables_*.py` module for exactly
+this reason. tables.py itself never mentions the column.
+"""
+from sqlalchemy import Column, String
+
+from tables import User
+
+User.__table__.append_column(Column("push_token", String(200), nullable=True))
