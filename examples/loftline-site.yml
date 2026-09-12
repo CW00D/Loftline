@@ -1,4 +1,6 @@
 # The Loftline website: accounts, membership, and the download for members.
+# Staging only for now, which keeps every Render resource on a free plan;
+# add production to the list when it is time to pay for its database.
 project_name: loftline-site
 package_name: loftline_site
 database: postgres
@@ -7,4 +9,4 @@ payments: [subscriptions]
 hosting:
   api: render
   web: render
-environments: [staging, production]
+environments: [staging]

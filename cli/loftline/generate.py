@@ -39,6 +39,7 @@ def answers_for(spec: Spec) -> dict[str, object]:
         "payments": list(spec.payments),
         "hosting_api": spec.hosting.api,
         "hosting_web": spec.hosting.web,
+        "environments": list(spec.environments),
     }
 
 

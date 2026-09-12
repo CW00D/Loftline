@@ -93,7 +93,7 @@ def paid(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def test_copier_asks_exactly_the_spec_questions() -> None:
-    """The questions in copier.yml are the Spec's fields, minus environments.
+    """The questions in copier.yml are the Spec's fields.
 
     `hosting` is a nested model in the spec and one flat question per slot in
     Copier, since Copier questions are scalars and lists (ADR-022).
@@ -107,7 +107,7 @@ def test_copier_asks_exactly_the_spec_questions() -> None:
     }
     hosting_questions = {f"hosting_{slot}" for slot in Hosting.model_fields}
 
-    spec_questions = set(Spec.model_fields) - {"environments", "hosting"}
+    spec_questions = set(Spec.model_fields) - {"hosting"}
 
     assert questions == spec_questions | hosting_questions
 
@@ -125,6 +125,7 @@ def test_answers_are_exactly_the_spec() -> None:
         "payments": [],
         "hosting_api": "render",
         "hosting_web": "render",
+        "environments": ["staging", "production"],
     }
 
 
@@ -578,6 +579,31 @@ def test_payments_are_refused_on_the_graph_branch(tmp_path: Path) -> None:
         generate(spec(database="aura", payments=["checkout"]), tmp_path / "out")
 
     assert not (tmp_path / "out").exists()
+
+
+# --- environments drive the blueprint (ADR-030) --------------------------------
+
+
+def test_a_staging_only_spec_creates_staging_only(tmp_path: Path) -> None:
+    project = generate(
+        spec(
+            project_name="solo",
+            database="postgres",
+            web=True,
+            environments=["staging"],
+        ),
+        tmp_path / "solo",
+    )
+    blueprint = yaml.safe_load((project / "render.yaml").read_text(encoding="utf-8"))
+
+    assert [d["name"] for d in blueprint["databases"]] == ["solo-db-staging"]
+    assert [s["name"] for s in blueprint["services"]] == [
+        "solo-api-staging",
+        "solo-web-staging",
+    ]
+    assert all(d["plan"] == "free" for d in blueprint["databases"])
+    tfvars = (project / "infra/terraform.tfvars").read_text(encoding="utf-8")
+    assert 'environments = ["staging"]' in tfvars
 
 
 # --- refusals ----------------------------------------------------------------

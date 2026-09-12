@@ -72,6 +72,11 @@ payments:
   default: []
   help: Payment modules, each its own overlay. Known - subscriptions, checkout.
 
+environments:
+  type: yaml
+  default: [staging, production]
+  help: Deploying environments. Each is a Render service (and database) and a GitHub environment. Start with [staging] to stay on free plans.
+
 # --- hosting, one provider per slot (ADR-022) ---------------------------------
 
 hosting_api:

@@ -1311,3 +1311,28 @@ Amended 2026-09-12 (ADR-024): the site's workflow and Render build use
 `npm install`, not `npm ci`. The template ships no lock file, because the
 dependency list varies with the overlays; a generated project commits its
 own after the first install, and both commands honour it from then on.
+
+---
+
+## ADR-030: The spec's environments drive the blueprint
+
+**Status:** Accepted. Extends ADR-013 and ADR-028.
+
+**Context.** The blueprint declared both environments regardless of the
+spec, and the second database is paid. A project that wants to exist for
+free, or simply to start small, had to hand-edit its blueprint.
+
+**Decision.** `environments` reaches the template as a Copier answer. The
+blueprint creates one service, one static site and one database per
+environment listed, and the Terraform variables carry the same list. A
+project written as `environments: [staging]` gets a free staging API,
+site and database; adding `production` to the spec and re-rendering adds
+the rest.
+
+**Consequences.**
+
+- The branches themselves are still all three (ADR-013): Terraform creates
+  `prod` whether or not anything deploys from it, so promotion works the
+  day production is added.
+- The GitHub `secrets` job in CI runs for whichever deploying branch is
+  pushed, unchanged.

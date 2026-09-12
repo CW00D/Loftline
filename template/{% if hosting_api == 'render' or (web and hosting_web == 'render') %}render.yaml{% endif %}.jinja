@@ -1,49 +1,52 @@
 {#- The blueprint is one file by Render's design, so it is the one place a
     spec choice appears as a block rather than a path (ADR-023). Each block
-    is keyed on a single answer and is complete in itself. -#}
+    is keyed on a single answer and is complete in itself. The spec's
+    environments list decides how many of each thing exist (ADR-030). -#}
+{%- set branches = {"staging": "staging", "production": "prod"} -%}
 # Render blueprint. Connect once by hand: dashboard, New, Blueprint, pick this
 # repository. Render then manages everything in this file.
 #
-# Two of each, one per deploying branch (ADR-013 in Loftline): `staging`
-# tracks the staging branch, `prod` tracks the prod branch. Promotion is a
-# merge from one branch to the next, never a cherry-pick.
+# One of each thing per deploying environment (ADR-013 in Loftline): the
+# `staging` environment tracks the staging branch, `production` the prod
+# branch. Promotion is a merge from one branch to the next, never a
+# cherry-pick. Which environments exist is the spec's `environments` list;
+# a project can start with staging alone and add production later.
 #
 # Only the base's variables are declared here, all sync: false. Their values,
 # and any an optional feature adds, are written to the service by Loftline's
 # secret writer and never appear in this repository. JWT_SECRET is generated
 # per project and per environment.
 #
-# Everything below is on Render's free plans, which cost nothing and are
-# enough to prove a project deploys (Loftline ADR-028). Their limits, and
+# Everything below is on Render's free plans where Render allows it, which
+# is enough to prove a project deploys (Loftline ADR-028). The limits, and
 # the one-word change that lifts each:
 #   services   sleep after fifteen idle minutes and take 30 to 60 seconds to
 #              wake; `plan: starter` keeps them always on.
 #   databases  Render allows one free database per account, and deletes it
 #              after its free period unless upgraded. Staging takes the free
-#              one; prod is on `basic-256mb`, the smallest paid plan, because
-#              a second free database is refused outright.
+#              one; production is on `basic-256mb`, the smallest paid plan,
+#              because a second free database is refused outright.
 {%- if database == 'postgres' %}
 #
 # The database is created here too, one per environment, and its connection
 # string is handed to the service by Render; DATABASE_URL never passes through
 # anything else.
 databases:
-  - name: {{ project_name }}-db-staging
-    plan: free
+{%- for env in environments %}
+  - name: {{ project_name }}-db-{{ branches[env] }}
+    plan: {{ "free" if env == "staging" else "basic-256mb" }}
     databaseName: app
     user: app
-
-  - name: {{ project_name }}-db-prod
-    plan: basic-256mb
-    databaseName: app
-    user: app
+{% endfor %}
 {%- endif %}
 services:
+{%- for env in environments %}
+{%- set branch = branches[env] %}
   - type: web
-    name: {{ project_name }}-api-staging
+    name: {{ project_name }}-api-{{ branch }}
     runtime: docker
     plan: free
-    branch: staging
+    branch: {{ branch }}
     rootDir: api
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
@@ -59,7 +62,7 @@ services:
 {%- elif database == 'postgres' %}
       - key: DATABASE_URL
         fromDatabase:
-          name: {{ project_name }}-db-staging
+          name: {{ project_name }}-db-{{ branch }}
           property: connectionString
 {%- endif %}
       - key: JWT_SECRET
@@ -70,56 +73,26 @@ services:
         sync: false
 {%- if web and hosting_web == 'render' %}
       - key: CORS_ORIGINS
-        value: https://{{ project_name }}-web-staging.onrender.com
+        value: https://{{ project_name }}-web-{{ branch }}.onrender.com
 {%- endif %}
-
-  - type: web
-    name: {{ project_name }}-api-prod
-    runtime: docker
-    plan: free
-    branch: prod
-    rootDir: api
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
-    autoDeploy: true
-    envVars:
-{%- if database == 'aura' %}
-      - key: NEO4J_URI
-        sync: false
-      - key: NEO4J_USER
-        sync: false
-      - key: NEO4J_PASSWORD
-        sync: false
-{%- elif database == 'postgres' %}
-      - key: DATABASE_URL
-        fromDatabase:
-          name: {{ project_name }}-db-prod
-          property: connectionString
-{%- endif %}
-      - key: JWT_SECRET
-        sync: false
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
+{% endfor %}
 {%- if web and hosting_web == 'render' %}
-      - key: CORS_ORIGINS
-        value: https://{{ project_name }}-web-prod.onrender.com
-
-  # The web front-end, a static site per deploying branch. Render builds it
-  # from web/ on every push to the branch; VITE_API_URL is baked into the
+  # The web front-end, a static site per deploying environment. Render builds
+  # it from web/ on every push to the branch; VITE_API_URL is baked into the
   # bundle at that build and names the API service beside it. Every path is
   # rewritten to index.html so the client-side router owns the URL space.
+{%- for env in environments %}
+{%- set branch = branches[env] %}
   - type: web
-    name: {{ project_name }}-web-staging
+    name: {{ project_name }}-web-{{ branch }}
     runtime: static
-    branch: staging
+    branch: {{ branch }}
     rootDir: web
     buildCommand: npm install --no-audit --no-fund && npm run build
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        value: https://{{ project_name }}-api-staging.onrender.com
+        value: https://{{ project_name }}-api-{{ branch }}.onrender.com
 {%- if payments %}
       - key: STRIPE_PUBLISHABLE_KEY
         sync: false
@@ -128,23 +101,5 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
-
-  - type: web
-    name: {{ project_name }}-web-prod
-    runtime: static
-    branch: prod
-    rootDir: web
-    buildCommand: npm install --no-audit --no-fund && npm run build
-    staticPublishPath: dist
-    envVars:
-      - key: VITE_API_URL
-        value: https://{{ project_name }}-api-prod.onrender.com
-{%- if payments %}
-      - key: STRIPE_PUBLISHABLE_KEY
-        sync: false
-{%- endif %}
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+{% endfor %}
 {%- endif %}
