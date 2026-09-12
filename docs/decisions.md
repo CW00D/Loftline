@@ -1248,3 +1248,28 @@ credential at provisioning time.
 - The mobile app's consumption of the publishable key is not provisioned:
   EAS builds read `eas.json`, and the value is not a secret. It is a
   documented edit when a mobile project takes payments.
+
+---
+
+## ADR-028: Free plans by default
+
+**Status:** Accepted. Amends ADR-014 point 6 and ADR-023.
+
+**Context.** The blueprint declared Render's starter plan for services and
+a paid plan for the production database, on the grounds that always-on and
+durable are what production means. Every project so far has been a gate
+run or a hobby product, and the person paying said they would rather not
+unless it is necessary.
+
+**Decision.** Every service and database in the blueprint is on Render's
+free plan. The blueprint's comment names each limit and the one-word change
+that lifts it. Upgrading is a decision made in the generated project when
+it starts to matter, not one the template makes for it.
+
+**Consequences.**
+
+- A free service sleeps after fifteen idle minutes; the first request
+  after that takes up to a minute. The provisioner's health check runs
+  straight after a deploy, when the service is awake, so it is unaffected.
+- A free Postgres is deleted by Render at the end of its free period. Prod
+  must be upgraded before it holds real data; the blueprint says so.

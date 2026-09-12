@@ -13,15 +13,18 @@
 # secret writer and never appear in this repository. JWT_SECRET is generated
 # per project and per environment.
 #
-# Starter plan: always-on, no cold starts. The free tier sleeps after fifteen
-# idle minutes and takes 30 to 60 seconds to wake.
+# Everything below is on Render's free plans, which cost nothing and are
+# enough to prove a project deploys (Loftline ADR-028). Their limits, and
+# the one-word change that lifts each:
+#   services   sleep after fifteen idle minutes and take 30 to 60 seconds to
+#              wake; `plan: starter` keeps them always on.
+#   databases  are deleted by Render after their free period unless upgraded;
+#              `plan: basic-256mb` is the smallest paid plan.
 {%- if database == 'postgres' %}
 #
 # The database is created here too, one per environment, and its connection
 # string is handed to the service by Render; DATABASE_URL never passes through
-# anything else. Staging is on the free plan, which Render deletes after 30
-# days unless upgraded: fine for disposable data, which is what staging holds.
-# Prod is the smallest paid plan.
+# anything else. Upgrade prod's plan before it holds data you want to keep.
 databases:
   - name: {{ project_name }}-db-staging
     plan: free
@@ -29,7 +32,7 @@ databases:
     user: app
 
   - name: {{ project_name }}-db-prod
-    plan: basic-256mb
+    plan: free
     databaseName: app
     user: app
 {%- endif %}
@@ -37,7 +40,7 @@ services:
   - type: web
     name: {{ project_name }}-api-staging
     runtime: docker
-    plan: starter
+    plan: free
     branch: staging
     rootDir: api
     dockerfilePath: ./Dockerfile
@@ -71,7 +74,7 @@ services:
   - type: web
     name: {{ project_name }}-api-prod
     runtime: docker
-    plan: starter
+    plan: free
     branch: prod
     rootDir: api
     dockerfilePath: ./Dockerfile
