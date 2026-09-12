@@ -136,6 +136,7 @@ async def test_spec_schema_lists_the_questions() -> None:
         "notifications",
         "payments",
         "hosting",
+        "domain",
         "environments",
     }
 

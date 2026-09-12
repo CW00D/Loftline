@@ -11,7 +11,7 @@ import pytest
 from loftline.errors import ProvisionError
 from loftline.models import Spec
 from loftline.providers.aura import Instance
-from loftline.providers.render import Service
+from loftline.providers.render import CustomDomain, Service
 from loftline.providers.stripe import WebhookEndpoint
 from loftline.provision import provision, service_name
 from loftline.resolve import Defer, Derive, Inject, Request, Resolution
@@ -64,6 +64,8 @@ class FakeRender:
             s.id: {} for s in services.values()
         }
         self.deploys: list[str] = []
+        self.declared = {}
+        self.verified = []
 
     def find_service(self, name: str) -> Service | None:
         return self.services.get(name)
@@ -73,6 +75,20 @@ class FakeRender:
 
     def set_env_var(self, service_id: str, key: str, value: str) -> None:
         self.env[service_id][key] = value
+
+    # Names the blueprint declared, keyed by service id; set by a test.
+    declared: dict[str, list[str]]
+    verified: list[tuple[str, str]]
+
+    def custom_domains(self, service_id: str) -> list[CustomDomain]:
+        return [
+            CustomDomain(id=f"cd-{n}", name=n, status="unverified")
+            for n in self.declared.get(service_id, [])
+        ]
+
+    def verify_custom_domain(self, service_id: str, domain_id: str) -> str:
+        self.verified.append((service_id, domain_id))
+        return "verified"
 
     def trigger_deploy(self, service_id: str) -> str:
         self.deploys.append(service_id)
@@ -643,4 +659,103 @@ def test_an_aura_project_still_needs_its_client() -> None:
             None,
             environments=["staging"],
             deploy=False,
+        )
+
+
+# --- ADR-031: the product's domain --------------------------------------------
+
+
+class FakeDns:
+    def __init__(self, zones: dict[str, str] | None = None) -> None:
+        self.zones = zones or {}
+        self.records: list[tuple[str, str, str]] = []
+
+    def find_zone(self, domain: str) -> str | None:
+        return self.zones.get(domain)
+
+    def upsert_cname(self, zone_id: str, name: str, target: str) -> object:
+        self.records.append((zone_id, name, target))
+        return None
+
+
+def branded_spec() -> Spec:
+    return spec(project_name="shop", database="postgres", web=True, domain="brand.dev")
+
+
+def test_a_domain_gets_dns_records_and_render_verification() -> None:
+    render = FakeRender(shop_services())
+    render.declared = {
+        "srv-s": ["api.staging.brand.dev"],
+        "web-s": ["staging.brand.dev"],
+    }
+    dns = FakeDns({"brand.dev": "zone1"})
+
+    report = provision(
+        branded_spec(),
+        shop_resolution(),
+        shop_vault(),
+        FakeGitHub(),
+        render,
+        stripe=FakeStripe(),
+        dns=dns,
+        environments=["staging"],
+        health=lambda url: True,
+    )
+
+    assert dns.records == [
+        ("zone1", "api.staging.brand.dev", "s.onrender.com"),
+        ("zone1", "staging.brand.dev", "ws.onrender.com"),
+    ]
+    assert render.verified == [
+        ("srv-s", "cd-api.staging.brand.dev"),
+        ("web-s", "cd-staging.brand.dev"),
+    ]
+    assert report.environments[0].domains == (
+        ("api.staging.brand.dev", "verified"),
+        ("staging.brand.dev", "verified"),
+    )
+
+
+def test_production_lives_at_the_apex() -> None:
+    from loftline.provision import hostnames
+
+    assert hostnames(branded_spec(), "production") == {
+        "api": "api.brand.dev",
+        "web": "brand.dev",
+    }
+    assert hostnames(branded_spec(), "staging") == {
+        "api": "api.staging.brand.dev",
+        "web": "staging.brand.dev",
+    }
+    assert hostnames(spec(database="postgres"), "staging") == {}
+
+
+def test_a_domain_not_on_cloudflare_is_refused_before_deploy() -> None:
+    render = FakeRender(shop_services())
+
+    with pytest.raises(ProvisionError, match=r"does not hold a zone for brand\.dev"):
+        provision(
+            branded_spec(),
+            shop_resolution(),
+            shop_vault(),
+            FakeGitHub(),
+            render,
+            stripe=FakeStripe(),
+            dns=FakeDns(),
+            environments=["staging"],
+        )
+
+    assert render.deploys == []
+
+
+def test_a_domain_without_a_dns_client_is_refused() -> None:
+    with pytest.raises(ProvisionError, match="DNS client"):
+        provision(
+            branded_spec(),
+            shop_resolution(),
+            shop_vault(),
+            FakeGitHub(),
+            FakeRender(shop_services()),
+            stripe=FakeStripe(),
+            environments=["staging"],
         )

@@ -9,6 +9,7 @@ import pytest
 
 from loftline.errors import ProvisionError
 from loftline.providers.aura import AuraClient
+from loftline.providers.cloudflare import CloudflareClient
 from loftline.providers.render import RenderClient
 from loftline.providers.stripe import StripeClient
 
@@ -358,3 +359,157 @@ def test_stripe_errors_name_the_call_and_what_stripe_said() -> None:
 
     with pytest.raises(ProvisionError, match="Invalid API Key provided"):
         client.create_webhook_endpoint("https://x/checkout/webhook", ["invoice.paid"])
+
+
+# --- Cloudflare --------------------------------------------------------------
+
+
+def cloudflare(
+    answers: dict[tuple[str, str], tuple[int, object]],
+) -> tuple[CloudflareClient, FakeTransport]:
+    transport = FakeTransport(answers)
+    return CloudflareClient("cf-token", transport=transport), transport
+
+
+def test_cloudflare_finds_the_zone_by_apex_name() -> None:
+    client, transport = cloudflare(
+        {
+            ("GET", "/client/v4/zones?name=brand.dev"): (
+                200,
+                {"success": True, "result": [{"id": "zone1", "name": "brand.dev"}]},
+            )
+        }
+    )
+
+    assert client.find_zone("brand.dev") == "zone1"
+    assert transport.calls[0][2]["Authorization"] == "Bearer cf-token"
+
+
+def test_cloudflare_creates_a_dns_only_cname_when_none_exists() -> None:
+    client, transport = cloudflare(
+        {
+            (
+                "GET",
+                "/client/v4/zones/zone1/dns_records?name=staging.brand.dev&type=CNAME",
+            ): (
+                200,
+                {"success": True, "result": []},
+            ),
+            ("POST", "/client/v4/zones/zone1/dns_records"): (
+                200,
+                {"success": True, "result": {"id": "rec1"}},
+            ),
+        }
+    )
+
+    record = client.upsert_cname(
+        "zone1", "staging.brand.dev", "brand-web-staging.onrender.com"
+    )
+
+    assert record.id == "rec1"
+    body = json.loads(transport.calls[1][3] or b"{}")
+    assert body["type"] == "CNAME"
+    assert body["content"] == "brand-web-staging.onrender.com"
+    assert body["proxied"] is False
+
+
+def test_cloudflare_corrects_a_cname_that_points_elsewhere_and_leaves_a_right_one() -> (
+    None
+):
+    answers: dict[tuple[str, str], tuple[int, object]] = {
+        (
+            "GET",
+            "/client/v4/zones/zone1/dns_records?name=staging.brand.dev&type=CNAME",
+        ): (
+            200,
+            {
+                "success": True,
+                "result": [
+                    {
+                        "id": "rec1",
+                        "name": "staging.brand.dev",
+                        "type": "CNAME",
+                        "content": "old.example",
+                    }
+                ],
+            },
+        ),
+        ("PATCH", "/client/v4/zones/zone1/dns_records/rec1"): (
+            200,
+            {"success": True, "result": {"id": "rec1"}},
+        ),
+    }
+    client, transport = cloudflare(answers)
+
+    client.upsert_cname("zone1", "staging.brand.dev", "new.onrender.com")
+    assert transport.calls[1][0] == "PATCH"
+
+    answers[
+        ("GET", "/client/v4/zones/zone1/dns_records?name=staging.brand.dev&type=CNAME")
+    ] = (
+        200,
+        {
+            "success": True,
+            "result": [
+                {
+                    "id": "rec1",
+                    "name": "staging.brand.dev",
+                    "type": "CNAME",
+                    "content": "new.onrender.com",
+                }
+            ],
+        },
+    )
+    client2, transport2 = cloudflare(answers)
+    client2.upsert_cname("zone1", "staging.brand.dev", "new.onrender.com")
+    assert [c[0] for c in transport2.calls] == ["GET"]
+
+
+def test_cloudflare_errors_carry_the_message() -> None:
+    client, _ = cloudflare(
+        {
+            ("GET", "/client/v4/zones?name=brand.dev"): (
+                403,
+                {
+                    "success": False,
+                    "errors": [{"code": 9109, "message": "Invalid access token"}],
+                },
+            )
+        }
+    )
+
+    with pytest.raises(ProvisionError, match="Invalid access token"):
+        client.find_zone("brand.dev")
+
+
+def test_render_custom_domains_and_verify() -> None:
+    client, _transport = render(
+        {
+            ("GET", "/v1/services/srv-1/custom-domains?limit=50"): (
+                200,
+                [
+                    {
+                        "customDomain": {
+                            "id": "cd1",
+                            "name": "api.brand.dev",
+                            "verificationStatus": "unverified",
+                        }
+                    }
+                ],
+            ),
+            ("POST", "/v1/services/srv-1/custom-domains/cd1/verify"): (
+                200,
+                {
+                    "customDomain": {
+                        "id": "cd1",
+                        "name": "api.brand.dev",
+                        "verificationStatus": "verified",
+                    }
+                },
+            ),
+        }
+    )
+
+    domains = client.custom_domains("srv-1")
+    assert [(d.name, d.status) for d in domains] == [("api.brand.dev", "unverified")]
+    assert client.verify_custom_domain("srv-1", "cd1") == "verified"

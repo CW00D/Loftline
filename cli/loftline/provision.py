@@ -30,7 +30,7 @@ from typing import Protocol
 from .errors import ProvisionError
 from .models import Spec
 from .providers.aura import Instance
-from .providers.render import Service
+from .providers.render import CustomDomain, Service
 from .providers.stripe import WebhookEndpoint
 from .resolve import Resolution
 from .secrets import DERIVATIONS, SecretSink, derive
@@ -81,6 +81,8 @@ class RenderLike(Protocol):
     def find_service(self, name: str) -> Service | None: ...
     def env_vars(self, service_id: str) -> dict[str, str]: ...
     def set_env_var(self, service_id: str, key: str, value: str) -> None: ...
+    def custom_domains(self, service_id: str) -> list[CustomDomain]: ...
+    def verify_custom_domain(self, service_id: str, domain_id: str) -> str: ...
     def trigger_deploy(self, service_id: str) -> str: ...
     def wait_for_deploy(
         self, service_id: str, deploy_id: str, *, timeout: float = 900
@@ -97,6 +99,28 @@ class AuraLike(Protocol):
     def wait_until_running(
         self, instance_id: str, *, timeout: float = 900
     ) -> Instance: ...
+
+
+class DnsLike(Protocol):
+    """What the provisioner needs from the DNS host. CloudflareClient satisfies it."""
+
+    def find_zone(self, domain: str) -> str | None: ...
+    def upsert_cname(self, zone_id: str, name: str, target: str) -> object: ...
+
+
+def hostnames(spec: Spec, environment: str) -> dict[str, str]:
+    """Component to hostname for an environment, when the spec has a domain.
+
+    Staging lives under staging.<domain>, production at the apex; the API
+    under api. of each (ADR-031). Mirrors the blueprint's macros.
+    """
+    if not spec.domain:
+        return {}
+    prefix = "" if environment == "production" else f"{environment}."
+    names = {"api": f"api.{prefix}{spec.domain}"}
+    if spec.web and spec.hosting.web == "render":
+        names["web"] = f"{prefix}{spec.domain}"
+    return names
 
 
 class StripeLike(Protocol):
@@ -163,6 +187,9 @@ class Provisioned:
     webhooks: tuple[str, ...] = ()  # module names whose endpoint was created this run
     web_service: str | None = None
     web_deploy_status: str | None = None
+    domains: tuple[
+        tuple[str, str], ...
+    ] = ()  # (hostname, Render's verification status)
 
 
 @dataclass(frozen=True)
@@ -291,6 +318,45 @@ def _webhooks(
     return tuple(created)
 
 
+def _dns(
+    spec: Spec,
+    environment: str,
+    services: dict[str, Service],
+    dns: DnsLike | None,
+    render: RenderLike,
+) -> tuple[tuple[str, str], ...]:
+    """Point each hostname at its service and have Render verify it."""
+    names = hostnames(spec, environment)
+    if not names:
+        return ()
+    if dns is None:
+        raise ProvisionError("a domain needs a DNS client; none was given")
+    assert spec.domain is not None
+    zone = dns.find_zone(spec.domain)
+    if zone is None:
+        raise ProvisionError(
+            f"Cloudflare does not hold a zone for {spec.domain}. Add the domain to "
+            "Cloudflare (register it there, or point its nameservers at Cloudflare) "
+            "once, then re-run."
+        )
+    out: list[tuple[str, str]] = []
+    for component, name in names.items():
+        service = services[component]
+        if not service.host:
+            raise ProvisionError(f"{service.name} has no URL yet to point {name} at")
+        dns.upsert_cname(zone, name, service.host)
+        status = "undeclared"
+        for declared in render.custom_domains(service.id):
+            if declared.name == name:
+                status = (
+                    declared.status
+                    if declared.status == "verified"
+                    else render.verify_custom_domain(service.id, declared.id)
+                )
+        out.append((name, status))
+    return tuple(out)
+
+
 def provision(
     spec: Spec,
     resolution: Resolution,
@@ -300,6 +366,7 @@ def provision(
     aura: AuraLike | None = None,
     *,
     stripe: StripeLike | None = None,
+    dns: DnsLike | None = None,
     environments: Sequence[str] | None = None,
     instance_type: str = "free-db",
     region: str = "europe-west1",
@@ -377,6 +444,12 @@ def provision(
         # --- payment modules' webhook endpoints --------------------------------
         webhooks = _webhooks(spec, environment, service, current, stripe, sink, github)
 
+        # --- the domain -------------------------------------------------------
+        components = {"api": service}
+        if web_service is not None:
+            components["web"] = web_service
+        domains = _dns(spec, environment, components, dns, render)
+
         # --- deploy -----------------------------------------------------------
         deploy_status: str | None = None
         web_deploy_status: str | None = None
@@ -406,6 +479,7 @@ def provision(
                 webhooks=webhooks,
                 web_service=web_service.name if web_service is not None else None,
                 web_deploy_status=web_deploy_status,
+                domains=domains,
             )
         )
 

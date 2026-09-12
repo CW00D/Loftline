@@ -17,14 +17,14 @@
       "channel": "preview",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://{{ project_name }}-api-prod.onrender.com"
+        "EXPO_PUBLIC_API_URL": "{% if domain %}https://api.{{ domain }}{% else %}https://{{ project_name }}-api-prod.onrender.com{% endif %}"
       }
     },
     "production": {
       "channel": "production",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://{{ project_name }}-api-prod.onrender.com"
+        "EXPO_PUBLIC_API_URL": "{% if domain %}https://api.{{ domain }}{% else %}https://{{ project_name }}-api-prod.onrender.com{% endif %}"
       }
     }
   },

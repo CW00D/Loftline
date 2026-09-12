@@ -72,6 +72,11 @@ payments:
   default: []
   help: Payment modules, each its own overlay. Known - subscriptions, checkout.
 
+domain:
+  type: str
+  default: ""
+  help: The product's own domain, apex only (example.com), or empty for Render's URLs. Staging lives at staging.<domain>, the API at api.<domain> and api.staging.<domain>.
+
 environments:
   type: yaml
   default: [staging, production]
@@ -93,3 +98,10 @@ hosting_web:
   choices:
     Render (static site): render
     Vercel: vercel
+
+hosting_dns:
+  type: str
+  default: cloudflare
+  help: Who holds the DNS zone for the domain, if there is one.
+  choices:
+    Cloudflare: cloudflare

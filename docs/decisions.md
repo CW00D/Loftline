@@ -1336,3 +1336,46 @@ the rest.
   day production is added.
 - The GitHub `secrets` job in CI runs for whichever deploying branch is
   pushed, unchanged.
+
+---
+
+## ADR-031: The product's domain is a spec value
+
+**Status:** Accepted
+
+**Context.** A product lives at its own domain, not at a hosting
+provider's URL. Pointing names at services and proving ownership to the
+host is the kind of once-per-project chore Loftline exists to remove, and
+it was being done by hand.
+
+**Decision.**
+
+1. **The spec gains `domain`,** the apex only, and a `hosting.dns` slot
+   naming who holds the zone, Cloudflare first. The names are fixed by
+   convention: staging lives at `staging.<domain>` with its API at
+   `api.staging.<domain>`; production at `<domain>` with its API at
+   `api.<domain>`. The blueprint, the provisioner and the mobile app's
+   hosted API URL all derive from that one rule.
+2. **The blueprint declares the names on the services,** and points the
+   site and the API's CORS at each other by domain name rather than by
+   Render URL, so the Render URLs stop mattering the moment DNS resolves.
+3. **The provisioner creates the records and asks the host to verify.**
+   A DNS-only CNAME per name, to the service's own hostname, created or
+   corrected through Cloudflare's API; then Render is asked to look each
+   name up, which is when it issues the certificate. Nothing is deployed
+   if the zone is not on Cloudflare.
+4. **The zone being on Cloudflare is the one manual step,** per domain,
+   like connecting the blueprint per project: register the domain there
+   or point its nameservers at it. `cloudflare_api_token` gains DNS edit
+   permission in its acquire steps.
+
+**Consequences.**
+
+- Records are never proxied. Render terminates TLS and verifies ownership
+  by lookup; Cloudflare's proxy in front of it breaks both.
+- The apex is a CNAME too, which Cloudflare flattens; on a DNS host that
+  cannot, production's site would need an A record, which is that host's
+  client's problem when one exists.
+- A `www.` name is not declared. Render redirects it to the apex on its
+  own for verified apex domains; if a project wants it declared, it is a
+  line in the blueprint.

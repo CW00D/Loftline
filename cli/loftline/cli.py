@@ -24,6 +24,7 @@ from .errors import LoftlineError
 from .generate import generate
 from .models import load_descriptors, load_spec
 from .providers.aura import AuraClient
+from .providers.cloudflare import CloudflareClient
 from .providers.render import RenderClient
 from .providers.stripe import StripeClient
 from .provision import provision
@@ -414,6 +415,13 @@ def provision_command(
             if project.payments
             else None
         )
+        dns = (
+            CloudflareClient(
+                store.get(descriptors["cloudflare_api_token"].vault_path or "")
+            )
+            if project.domain
+            else None
+        )
         report = provision(
             project,
             resolution,
@@ -422,6 +430,7 @@ def provision_command(
             render,
             aura,
             stripe=stripe,
+            dns=dns,
             environments=environment,
             instance_type=aura_type,
             region=region,
@@ -449,6 +458,8 @@ def provision_command(
         if entry.web_service:
             web_deploy = entry.web_deploy_status or "skipped"
             typer.echo(f"  {'':11} {entry.web_service}  deploy {web_deploy}")
+        for hostname, status in entry.domains:
+            typer.echo(f"  {'':11} https://{hostname}  ({status})")
     typer.echo("No value was printed.")
 
 

@@ -156,6 +156,9 @@ class Hosting(BaseModel):
 
     api: Literal["render"] = "render"
     web: Literal["render", "vercel"] = "render"
+    # Who holds the DNS zone for `domain` (ADR-031). Only read when a domain
+    # is set.
+    dns: Literal["cloudflare"] = "cloudflare"
 
 
 class Spec(BaseModel):
@@ -177,6 +180,12 @@ class Spec(BaseModel):
     notifications: bool = False
     payments: tuple[str, ...] = ()
     hosting: Hosting = Hosting()
+    # The product's own domain, apex only (ADR-031). Staging lives under
+    # staging.<domain>, production at <domain>; the API under api. of each.
+    domain: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
+    )
     environments: tuple[str, ...] = ("staging", "production")
 
     @model_validator(mode="after")

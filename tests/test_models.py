@@ -310,3 +310,16 @@ def test_spec_rejects_an_unknown_hosting_provider_or_slot() -> None:
         spec(hosting={"api": "fly"})
     with pytest.raises(ValidationError):
         spec(hosting={"database": "render"})
+
+
+# --- ADR-031: the product's domain --------------------------------------------
+
+
+def test_spec_accepts_an_apex_domain_and_rejects_the_rest() -> None:
+    from .conftest import spec
+
+    assert spec(domain="example.com").domain == "example.com"
+    assert spec(domain="my-product.co.uk").hosting.dns == "cloudflare"
+    for bad in ("Example.com", "https://example.com", "example", "-x.com", "a b.com"):
+        with pytest.raises(ValidationError):
+            spec(domain=bad)

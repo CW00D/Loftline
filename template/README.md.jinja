@@ -134,3 +134,10 @@ When the template improves, `copier update` merges the change in.
 Connect the repository to Render once by hand: New, Blueprint, pick this
 repository. Render reads `render.yaml` and creates everything in it. From
 then on a push to `staging` or `prod` deploys.
+{% if domain %}
+The product lives at `{{ domain }}`: staging at `staging.{{ domain }}` with
+its API at `api.staging.{{ domain }}`, production at `{{ domain }}` with its
+API at `api.{{ domain }}`. The names are declared in `render.yaml`; Loftline
+creates the DNS records on Cloudflare at provisioning, so the zone must be
+on Cloudflare first.
+{% endif %}

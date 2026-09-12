@@ -33,6 +33,20 @@ class Service:
     url: str | None
     branch: str | None
 
+    @property
+    def host(self) -> str | None:
+        """The service's own hostname, which a CNAME points at."""
+        if not self.url:
+            return None
+        return self.url.split("://", 1)[-1].rstrip("/")
+
+
+@dataclass(frozen=True)
+class CustomDomain:
+    id: str
+    name: str
+    status: str  # Render's verificationStatus: "verified" | "unverified"
+
 
 class RenderClient:
     def __init__(
@@ -100,6 +114,33 @@ class RenderClient:
             {"value": value},
             redact=value,
         )
+
+    def custom_domains(self, service_id: str) -> list[CustomDomain]:
+        """The names the blueprint declared on the service, with Render's view
+        of whether DNS proves them."""
+        out: list[CustomDomain] = []
+        for entry in self._call(
+            "GET", f"/services/{service_id}/custom-domains?limit=50"
+        ):
+            domain = entry.get("customDomain", entry)
+            out.append(
+                CustomDomain(
+                    id=str(domain["id"]),
+                    name=str(domain["name"]),
+                    status=str(domain.get("verificationStatus", "unverified")),
+                )
+            )
+        return out
+
+    def verify_custom_domain(self, service_id: str, domain_id: str) -> str:
+        """Ask Render to look the name up now. Returns the new status."""
+        data = self._call(
+            "POST",
+            f"/services/{service_id}/custom-domains/{quote(domain_id)}/verify",
+            {},
+        )
+        domain = data.get("customDomain", data) if isinstance(data, dict) else {}
+        return str(domain.get("verificationStatus", "unverified"))
 
     def trigger_deploy(self, service_id: str) -> str:
         data = self._call(

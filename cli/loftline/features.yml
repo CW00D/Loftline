@@ -41,6 +41,15 @@ features:
         - {field: hosting.web, equals: render}
     requires: [render_api_key]
 
+  # The DNS zone, when the product has its own domain (ADR-031). The records
+  # are created at provisioning; the token that creates them is global.
+  hosting.dns.cloudflare:
+    enabled_when:
+      all_of:
+        - {field: domain, is_true: true}
+        - {field: hosting.dns, equals: cloudflare}
+    requires: [cloudflare_api_token]
+
   # --- the database slot, the one exclusive choice (ADR-004) ------------------
 
   database.postgres:

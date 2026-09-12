@@ -125,6 +125,8 @@ def test_answers_are_exactly_the_spec() -> None:
         "payments": [],
         "hosting_api": "render",
         "hosting_web": "render",
+        "hosting_dns": "cloudflare",
+        "domain": "",
         "environments": ["staging", "production"],
     }
 
@@ -604,6 +606,33 @@ def test_a_staging_only_spec_creates_staging_only(tmp_path: Path) -> None:
     assert all(d["plan"] == "free" for d in blueprint["databases"])
     tfvars = (project / "infra/terraform.tfvars").read_text(encoding="utf-8")
     assert 'environments = ["staging"]' in tfvars
+
+
+# --- the product's domain (ADR-031) --------------------------------------------
+
+
+def test_a_domain_names_every_service_and_rewires_the_origins(tmp_path: Path) -> None:
+    project = generate(
+        spec(project_name="brand", database="postgres", web=True, domain="brand.dev"),
+        tmp_path / "brand",
+    )
+    blueprint = yaml.safe_load((project / "render.yaml").read_text(encoding="utf-8"))
+    by_name = {s["name"]: s for s in blueprint["services"]}
+
+    assert by_name["brand-api-staging"]["domains"] == ["api.staging.brand.dev"]
+    assert by_name["brand-api-prod"]["domains"] == ["api.brand.dev"]
+    assert by_name["brand-web-staging"]["domains"] == ["staging.brand.dev"]
+    assert by_name["brand-web-prod"]["domains"] == ["brand.dev"]
+    env = {v["key"]: v.get("value") for v in by_name["brand-web-prod"]["envVars"]}
+    assert env["VITE_API_URL"] == "https://api.brand.dev"
+    cors = {v["key"]: v.get("value") for v in by_name["brand-api-staging"]["envVars"]}
+    assert cors["CORS_ORIGINS"] == "https://staging.brand.dev"
+
+
+def test_without_a_domain_nothing_is_declared(minimal: Path) -> None:
+    blueprint = yaml.safe_load((minimal / "render.yaml").read_text(encoding="utf-8"))
+
+    assert all("domains" not in s for s in blueprint["services"])
 
 
 # --- refusals ----------------------------------------------------------------

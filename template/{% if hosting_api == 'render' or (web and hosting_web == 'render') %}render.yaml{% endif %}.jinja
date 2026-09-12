@@ -3,6 +3,11 @@
     is keyed on a single answer and is complete in itself. The spec's
     environments list decides how many of each thing exist (ADR-030). -#}
 {%- set branches = {"staging": "staging", "production": "prod"} -%}
+{#- Hostnames when the product has a domain (ADR-031): staging under
+    staging.<domain>, production at the apex, the API under api. of each. -#}
+{%- macro sub(env) %}{{ "" if env == "production" else env ~ "." }}{% endmacro -%}
+{%- macro api_origin(env) %}{% if domain %}https://api.{{ sub(env) }}{{ domain }}{% else %}https://{{ project_name }}-api-{{ branches[env] }}.onrender.com{% endif %}{% endmacro -%}
+{%- macro web_origin(env) %}{% if domain %}https://{{ sub(env) }}{{ domain }}{% else %}https://{{ project_name }}-web-{{ branches[env] }}.onrender.com{% endif %}{% endmacro -%}
 # Render blueprint. Connect once by hand: dashboard, New, Blueprint, pick this
 # repository. Render then manages everything in this file.
 #
@@ -51,6 +56,10 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     autoDeploy: true
+{%- if domain %}
+    domains:
+      - api.{{ sub(env) }}{{ domain }}
+{%- endif %}
     envVars:
 {%- if database == 'aura' %}
       - key: NEO4J_URI
@@ -73,7 +82,7 @@ services:
         sync: false
 {%- if web and hosting_web == 'render' %}
       - key: CORS_ORIGINS
-        value: https://{{ project_name }}-web-{{ branch }}.onrender.com
+        value: {{ web_origin(env) }}
 {%- endif %}
 {% endfor %}
 {%- if web and hosting_web == 'render' %}
@@ -90,9 +99,13 @@ services:
     rootDir: web
     buildCommand: npm install --no-audit --no-fund && npm run build
     staticPublishPath: dist
+{%- if domain %}
+    domains:
+      - {{ sub(env) }}{{ domain }}
+{%- endif %}
     envVars:
       - key: VITE_API_URL
-        value: https://{{ project_name }}-api-{{ branch }}.onrender.com
+        value: {{ api_origin(env) }}
 {%- if payments %}
       - key: STRIPE_PUBLISHABLE_KEY
         sync: false
