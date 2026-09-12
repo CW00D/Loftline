@@ -101,6 +101,13 @@ resource "github_branch_protection" "staging" {
   required_pull_request_reviews {
     required_approving_review_count = 0
   }
+
+  # Staging deploys on push, so a red pull request must not reach it. The
+  # secrets job is not listed: it runs only on the push that follows.
+  required_status_checks {
+    strict   = true
+    contexts = var.staging_required_checks
+  }
 }
 
 resource "github_branch_protection" "prod" {

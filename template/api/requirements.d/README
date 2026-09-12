@@ -1,0 +1,6 @@
+Dependencies that belong to an optional feature, one file per feature. The
+base's are in requirements.txt. The Dockerfile and CI install every .txt file
+here after the base's; locally, `pip install -r requirements.d/<name>.txt`.
+
+This file keeps the directory present when no feature needs one, because the
+Dockerfile copies the directory and git cannot track an empty one.

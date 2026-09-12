@@ -1273,3 +1273,31 @@ it starts to matter, not one the template makes for it.
   straight after a deploy, when the service is awake, so it is unaffected.
 - A free Postgres is deleted by Render at the end of its free period. Prod
   must be upgraded before it holds real data; the blueprint says so.
+
+---
+
+## ADR-029: What the second gate run found
+
+**Status:** Accepted. Amends ADR-018 and ADR-026.
+
+**Context.** The first Postgres project deployed through the full flow
+found two things the local checks could not: git cannot track an empty
+directory, so the Dockerfile's copy of `requirements.d/` failed in CI for a
+project with no overlay packages; and a pull request whose CI was red merged
+into `staging` regardless, because only `prod` required checks, and staging
+deploys on push.
+
+**Decision.** `requirements.d/` carries a README, so the directory always
+exists in the repository. The Terraform module requires the `api` job on
+`staging` as well as `prod`, through a `staging_required_checks` variable.
+The `secrets` job is not required on staging because it runs only on the
+push that follows the merge; on `prod` it is required and reports as
+skipped on the pull request, which GitHub counts as passing.
+
+**Consequences.**
+
+- An already generated project picks up the protection change on its next
+  `terraform init -upgrade` and `apply`, once Loftline's `main` is pushed:
+  generated root modules reference the module by that branch.
+- The gate did its job. Both failures were invisible to the generation
+  tests, which render and lint but do not commit or deploy.

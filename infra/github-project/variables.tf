@@ -26,6 +26,12 @@ variable "required_checks" {
   default     = ["api", "secrets"]
 }
 
+variable "staging_required_checks" {
+  description = "CI job names that must pass before staging accepts a merge."
+  type        = list(string)
+  default     = ["api"]
+}
+
 variable "collaborators" {
   description = "GitHub usernames to add as collaborators, with their permission."
   type        = map(string) # username => pull | triage | push | maintain | admin
