@@ -1,0 +1,10 @@
+# The Loftline website: accounts, membership, and the download for members.
+project_name: loftline-site
+package_name: loftline_site
+database: postgres
+web: true
+payments: [subscriptions]
+hosting:
+  api: render
+  web: render
+environments: [staging, production]
