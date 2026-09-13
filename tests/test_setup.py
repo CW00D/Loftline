@@ -85,6 +85,11 @@ class FakeMachine:
         self.env[name] = value
         return "persisted"
 
+    admin = True
+
+    def elevated(self) -> bool:
+        return self.admin
+
 
 @pytest.fixture
 def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -248,3 +253,30 @@ def test_no_claude_desktop_means_a_quiet_skip(isolated: Path) -> None:
 
     assert report.outcomes[-1].done is False
     assert "not installed" in report.outcomes[-1].detail
+
+
+def test_chocolatey_is_not_run_from_an_unelevated_window(isolated: Path) -> None:
+    machine = FakeMachine(isolated, present={"choco", "git", "gh", "age", "sops"})
+    machine.admin = False
+    console = ScriptedConsole()
+    report = wizard.SetupReport()
+
+    wizard.step_tools(console, machine, report)
+
+    assert not any(r[0][0] == "choco" for r in machine.runs)
+    outcome = {o.step: o for o in report.outcomes}["tool terraform"]
+    assert outcome.done is False and "Administrator" in outcome.detail
+    assert any("Run as administrator" in s for s in console.said)
+
+
+def test_winget_is_preferred_over_chocolatey_when_both_exist(isolated: Path) -> None:
+    machine = FakeMachine(
+        isolated, present={"winget", "choco", "git", "gh", "age", "sops"}
+    )
+    machine.admin = False
+    report = wizard.SetupReport()
+
+    wizard.step_tools(ScriptedConsole(), machine, report)
+
+    assert any(r[0][:2] == ("winget", "install") for r in machine.runs)
+    assert {o.step: o for o in report.outcomes}["tool terraform"].done is True

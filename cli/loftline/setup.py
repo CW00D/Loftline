@@ -58,6 +58,7 @@ class Machine(Protocol):
         self, argv: Sequence[str], *, interactive: bool = False
     ) -> tuple[int, str]: ...
     def persist_env(self, name: str, value: str) -> str: ...
+    def elevated(self) -> bool: ...
 
 
 class RealMachine:
@@ -65,7 +66,29 @@ class RealMachine:
     home = Path.home()
 
     def which(self, tool: str) -> str | None:
-        return shutil.which(tool)
+        found = shutil.which(tool)
+        if found is None and self.system == "Windows" and tool == "winget":
+            # The App Execution Alias folder is on the user's PATH but not
+            # always on the one a tool inherits.
+            alias = (
+                Path(os.environ.get("LOCALAPPDATA", ""))
+                / "Microsoft"
+                / "WindowsApps"
+                / "winget.exe"
+            )
+            if alias.exists():
+                return str(alias)
+        return found
+
+    def elevated(self) -> bool:
+        if self.system != "Windows":
+            return True
+        try:
+            import ctypes
+
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except (AttributeError, OSError):
+            return False
 
     def run(self, argv: Sequence[str], *, interactive: bool = False) -> tuple[int, str]:
         if interactive:
@@ -167,14 +190,26 @@ def step_tools(console: Console, machine: Machine, report: SetupReport) -> None:
     managers = _managers(machine)
     for tool, (why, commands) in TOOLS.items():
         if machine.which(tool):
+            console.say(f"   {tool}: present")
             report.note(f"tool {tool}", True, "present")
             continue
-        command = next((commands[m] for m in managers if m in commands), None)
+        manager = next((m for m in managers if m in commands), None)
+        command = commands[manager] if manager else None
         if command is None:
             console.say(
                 f"   {tool} is missing ({why}). Install it by hand, then re-run setup."
             )
             report.note(f"tool {tool}", False, "missing, no package manager for it")
+            continue
+        if manager == "choco" and not machine.elevated():
+            console.say(
+                f"   {tool} is missing ({why}). Chocolatey needs an Administrator "
+                "window: open PowerShell with Run as administrator and run\n"
+                f"       {command}\n   then run loftline setup again."
+            )
+            report.note(
+                f"tool {tool}", False, "needs an Administrator window; see above"
+            )
             continue
         if console.ask_yes(
             f"   {tool} is missing ({why}). Install it now with: {command}"
@@ -205,6 +240,7 @@ def step_github(console: Console, machine: Machine, report: SetupReport) -> None
         return
     code, _ = machine.run(["gh", "auth", "status"])
     if code == 0:
+        console.say("   Already signed in.")
         report.note("github", True, "signed in")
         return
     if console.ask_yes("   Sign in to GitHub now? A browser window will open."):
@@ -250,6 +286,7 @@ def step_vault(
     console.say("\n3. Your vault")
     config = VaultConfig.from_env()
     if config.vault_path is not None and config.vault_path.exists():
+        console.say(f"   Already at {config.vault_path}.")
         report.note("vault", True, f"already at {config.vault_path}")
         return config.vault_path
     if not (machine.which("age-keygen") and machine.which("sops")):
@@ -350,6 +387,7 @@ def step_dashboard(
     assert descriptor.vault_path is not None
     store = SopsAgeVault(vault)
     if descriptor.vault_path in store.list_paths():
+        console.say("   Token already stored.")
         report.note("dashboard", True, "token already stored")
         return
     if not console.ask_yes(
