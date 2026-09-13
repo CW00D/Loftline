@@ -606,7 +606,8 @@ def test_a_staging_only_spec_creates_staging_only(tmp_path: Path) -> None:
     ]
     assert all(d["plan"] == "free" for d in blueprint["databases"])
     tfvars = (project / "infra/terraform.tfvars").read_text(encoding="utf-8")
-    assert 'environments = ["staging"]' in tfvars
+    # GitHub environments are free and always both; Render follows the spec.
+    assert 'environments = ["staging", "production"]' in tfvars
 
 
 # --- the product's domain (ADR-031) --------------------------------------------

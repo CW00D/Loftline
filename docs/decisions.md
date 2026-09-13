@@ -1478,3 +1478,8 @@ machine, so "create it here" cannot mean the server creating anything.
   Copy button is the fallback there and everywhere.
 - Product migrations in the site are numbered from 0100 so a template
   overlay added later never collides.
+
+Amended 2026-09-13 (ADR-030): the Terraform variables always name both
+GitHub environments. They hold secrets and cost nothing, and removing one
+with the spec's list destroyed a real environment on the first project.
+Render resources still follow the spec.
