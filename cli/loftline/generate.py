@@ -15,9 +15,11 @@ from copier.errors import DirtyLocalWarning
 
 from .errors import GenerateError
 from .models import Spec
+from .paths import bundle_root
 
-# The repository root holds copier.yml; template/ is its `_subdirectory`.
-TEMPLATE_ROOT = Path(__file__).resolve().parents[2]
+# copier.yml and template/ (its `_subdirectory`): the checkout, or the copy
+# shipped in the wheel. See paths.py.
+TEMPLATE_ROOT = bundle_root()
 
 # What the template has a branch for. The Spec model accepts more, because
 # the resolver can plan a project the template cannot render yet; that gap

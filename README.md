@@ -1,131 +1,75 @@
 # Loftline
 
-A scaffolder and provisioner for new applications. Loftline takes a small
-declarative project specification and produces a working repository, deployed
-to a hosting provider, with CI, environments and every required credential
-already wired.
+A spec file becomes a running product: repository, CI, database, API, website,
+mobile app, secrets, payments, domain. Loftline generates the project from an
+opinionated template and then does the part scaffolders leave to you: it
+creates the GitHub repository, writes every credential where CI and hosting
+read them, registers vendor webhooks, points your domain at it and deploys.
 
-The name comes from boatbuilding. The lines plan is the full-size drawing from
-which every pattern and mould is taken; one authoritative set of lines, many
-hulls, all faithful to it. The template is the lines plan. Generated projects
-are hulls.
-
-## Why this exists
-
-Setting up a new application costs two to three days. The cost is not the
-difficulty of the work. It is that the work arrives when an idea has maximum
-energy, consumes that energy on undifferentiated infrastructure, and blocks
-everything else while it runs. The loss is not the days. It is the projects
-that never get past that wall.
-
-Three distinct costs are being paid, and only one of them is unavoidable:
-
-1. **Enrolment.** Apple Developer Program, Play console, registrar, payment
-   methods. Genuinely manual, genuinely one-off, and already paid for. Not
-   addressed here.
-2. **Custody.** Finding the push token again. Working out which service account
-   file belongs where. Re-deriving what the last project called an environment
-   variable. This recurs on every project only because the knowledge lives in
-   whichever repository it was last used in. **This is the largest cost and it
-   is entirely automatable.**
-3. **Wiring.** Repository creation, branch protection, environment secrets,
-   hosting linkage, account boilerplate. Mechanical and automatable.
-
-Loftline addresses custody and wiring. It moves enrolment to a documented
-manual step that is performed once per credential per lifetime.
-
-## What it does
-
-```
-loftline new beerreel
+```yaml
+# loftline.yml
+project_name: shop
+package_name: shop
+database: postgres
+web: true
+payments: [subscriptions]
+domain: shop.example
+environments: [staging]
 ```
 
-reads a spec, unions the credential requirements of every enabled feature,
-diffs them against a vault of credentials already held, and then:
-
-- **held** credentials are injected silently
-- **derivable** credentials are generated from something already held
-- **manual** credentials are requested, with step-by-step acquisition
-  instructions printed inline, and stored permanently on first supply
-- **produced** credentials are deferred to provisioning time and written
-  straight into environment secrets
-
-Everything is then written to GitHub environment secrets and the hosting
-provider's environment groups. On the second project the manual list is empty
-unless the spec enables a feature never used before, or a credential has
-expired.
-
-## Architecture: three planes
-
-**Account plane.** Credentials that belong to you rather than to any project.
-Enrolment is manual. Custody is the vault plus `docs/credentials.md`.
-
-**Spec plane.** A schema-validated `loftline.yml`: name, stack selections,
-feature flags, environments. This is the only artefact an LLM ever authors.
-
-**Execution plane.** Fully deterministic. The resolver partitions credentials,
-Copier renders the repository, Terraform provisions, the GitHub CLI writes
-secrets, EAS handles mobile signing.
-
-The load-bearing constraint: **an LLM may write the spec and must never perform
-the provisioning.** A model asked to provision directly will succeed several
-times and then silently misconfigure something.
-
-## Non-goals
-
-Recorded explicitly, because scope creep on a project of this class happens
-through omission rather than decision.
-
-Loftline does **not**:
-
-- Create GitHub organisations. Not possible via API without Enterprise Cloud
-  with enterprise-managed accounts, and one organisation with one repository
-  per product is structurally better regardless.
-- Perform enrolment: Apple or Play sign-up, D-U-N-S, payment methods, store
-  review. It documents these and prompts for their outputs.
-- Purchase domains or wait on DNS propagation.
-- Host anything. It configures third-party hosting; it is not a platform.
-- Target users who cannot operate a command line. For a non-technical user the
-  enrolment step is the entire wall, and serving them requires a hosted product
-  where the operator holds the vendor relationships. Different product.
-- Support a matrix of stack permutations. See `docs/decisions.md`, ADR-004.
-- Generate application logic. It generates the substrate the logic sits on.
-
-## Setting it up
-
-See `docs/setup.md`: tools, an encryption key and its backup, a vault,
-your first credentials, and Loftline as tools inside Claude. About half an
-hour on a new machine.
-
-## Repository layout
-
 ```
-loftline/
-  copier.yml          # question set; contains _subdirectory: template
-  pyproject.toml      # packages the CLI as `loftline`
-  CLAUDE.md           # working context for Claude Code
-  template/           # the lines plan: what gets rendered
-  infra/              # Terraform modules consumed by generated projects
-  cli/                # resolver, generator, provisioner
-  docs/
-    decisions.md      # architecture decision records
-    credentials.md    # credential model and descriptor schema
-    roadmap.md        # build sequence and gates
+loftline plan shop.yml        # what it needs, what you already hold, how to get the rest
+loftline new shop.yml ./shop  # generate it
+loftline provision shop.yml --repo you/shop   # secrets, webhooks, DNS, deploy
 ```
 
-## Operating rules
+The centre of the tool is not the templating but the credential resolver.
+From a spec it works out exactly which credentials the product needs, which
+you already hold in your vault, which it can generate, which only exist once
+something is provisioned, and which you must go and get, with the steps. It
+never asks you for a value it could answer itself, and no credential value
+ever passes through a file it tracks, a screen, or a log.
 
-1. Never add a template feature that has not been needed twice.
-2. Build the next real application *through* the template, not beside it.
-3. No credential value is ever committed, printed to logs, or written to
-   Terraform state where avoidable.
+## What a generated project contains
 
-A scaffolder maintained without a consuming project is a hobby with a Terraform
-directory.
+- A FastAPI backend with email and password auth, on Postgres with Alembic
+  migrations or on Neo4j, with a complete local system under Docker Compose
+  and tests against a real database.
+- Optional overlays, each its own set of files: a Vite and React website, an
+  Expo app for iOS and Android, push notifications, one-off checkout and
+  rolling subscriptions through Stripe.
+- Three long-lived branches promoted by pull request, one CI workflow, a
+  Render blueprint that creates the services and databases, and a thin
+  Terraform module for the repository.
 
-## Licence
+## Install
 
-None. All rights reserved by default. Deferred to the point of first sharing,
-and it is two decisions: the licence on the template, and the licence on
-generated output. Generated projects must be unencumbered or nobody will use
-them.
+See [docs/setup.md](docs/setup.md), or the install page on the dashboard.
+In short: `uv tool install git+https://github.com/CW00D/Loftline`, the tools
+it drives (sops, age, gh, terraform, docker), and `loftline vault init`.
+
+## The dashboard
+
+[loftline.org](https://staging.loftline.org) shows a team its projects: what
+each was generated from, where it is deployed and whether it is up, and who
+should be on its repository. It holds intent and never a credential; the
+administrator's machine, where the vault is, is what acts. `loftline sync`
+and `loftline realise` are the bridge.
+
+## Reading the repository
+
+- `docs/decisions.md` records why things are the way they are. Read it before
+  changing anything; it is the argument, not the code, that keeps the tool
+  coherent.
+- `docs/credentials.md` describes the credential model.
+- `docs/roadmap.md` is the plan and its gates.
+- `template/` is the product. `cli/` is the resolver, generator and
+  provisioner. `infra/` holds the Terraform module generated projects use.
+
+## The name
+
+In boatbuilding, lofting scales the designer's drawings to full size; every
+pattern and mould is taken from the resulting lines. The template is the lines
+plan. Generated projects are hulls.
+
+MIT licensed.

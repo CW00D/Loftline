@@ -33,13 +33,14 @@ from .errors import LoftlineError, SpecError
 from .features import load_default_features
 from .generate import generate
 from .models import Spec, load_descriptors
+from .paths import credentials_file
 from .report import render_plan
 from .resolve import resolve
 from .secrets import GitHubSink, write_secrets
 from .site import DEFAULT_SITE, SiteClient, sync_project
 from .vault_sops import SopsAgeVault
 
-CREDENTIALS_FILE = Path(__file__).resolve().parents[2] / "credentials.yml"
+CREDENTIALS_FILE = credentials_file()
 
 INSTRUCTIONS = """\
 Loftline scaffolds and provisions applications, credentials first. The

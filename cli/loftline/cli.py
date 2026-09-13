@@ -23,6 +23,7 @@ from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
 from .generate import generate
 from .models import Spec, load_descriptors, load_spec
+from .paths import credentials_file
 from .providers.aura import AuraClient
 from .providers.cloudflare import CloudflareClient
 from .providers.render import RenderClient
@@ -63,8 +64,13 @@ VaultOption = Annotated[
 ]
 CredentialsOption = Annotated[
     Path,
-    typer.Option("--credentials", help="Path to credentials.yml."),
+    typer.Option(
+        "--credentials",
+        help="Path to credentials.yml. Defaults to the one shipped with Loftline.",
+        show_default=False,
+    ),
 ]
+DEFAULT_CREDENTIALS = credentials_file()
 
 _SYMBOL = {Status.PASS: "ok  ", Status.FAIL: "FAIL", Status.UNKNOWN: "?   "}
 
@@ -151,7 +157,7 @@ def vault_set(
         str, typer.Argument(help="The credential's name in credentials.yml.")
     ],
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     replace: Annotated[
         bool,
         typer.Option(
@@ -233,7 +239,7 @@ def _read_value(name: str, from_stdin: bool) -> str:
 def plan(
     spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
 ) -> None:
     """Report how every credential this spec needs will be resolved.
 
@@ -261,7 +267,7 @@ def new(
         Path, typer.Argument(help="Directory to render the project into.")
     ],
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     force: Annotated[
         bool, typer.Option("--force", help="Render into a directory that is not empty.")
     ] = False,
@@ -304,7 +310,7 @@ def secrets_write(
         str, typer.Option("--repo", help="GitHub repository as OWNER/NAME.")
     ],
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     partial: Annotated[
         bool,
         typer.Option(
@@ -360,7 +366,7 @@ def provision_command(
         str, typer.Option("--repo", help="GitHub repository as OWNER/NAME.")
     ],
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     environment: Annotated[
         list[str] | None,
         typer.Option(
@@ -510,7 +516,7 @@ SiteOption = Annotated[
 @app.command()
 def login(
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     site: SiteOption = DEFAULT_SITE,
 ) -> None:
     """Store a dashboard token in the vault and check it works.
@@ -559,7 +565,7 @@ def sync(
         ),
     ] = None,
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     site: SiteOption = DEFAULT_SITE,
 ) -> None:
     """Push the project's spec and live status to the dashboard, and pull the
@@ -620,7 +626,7 @@ def realise(
         typer.Option("--terraform", help="Path to terraform, if it is not on PATH."),
     ] = None,
     vault: VaultOption = None,
-    credentials: CredentialsOption = Path("credentials.yml"),
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     site: SiteOption = DEFAULT_SITE,
 ) -> None:
     """Make a project someone defined on the dashboard real.

@@ -1,8 +1,10 @@
 [project]
 name = "loftline"
-version = "0.1.0"
+version = "0.2.0"
 description = "A scaffolder and provisioner: credential custody first, templating second."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
@@ -30,6 +32,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cli/loftline"]
+
+# The template is the product. It ships inside the wheel beside the code,
+# so an installed tool has everything a checkout has (cli/loftline/paths.py).
+[tool.hatch.build.targets.wheel.force-include]
+"copier.yml" = "loftline/_bundle/copier.yml"
+"credentials.yml" = "loftline/_bundle/credentials.yml"
+"template" = "loftline/_bundle/template"
+"infra" = "loftline/_bundle/infra"
+
+[tool.hatch.build.targets.sdist]
+include = ["cli", "template", "infra", "copier.yml", "credentials.yml", "README.md", "LICENSE", "docs"]
 
 [tool.pytest.ini_options]
 pythonpath = ["cli"]
