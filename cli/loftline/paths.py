@@ -10,6 +10,7 @@ than walking up from its own source file.
 
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +24,11 @@ def bundle_root() -> Path:
     bundled = Path(__file__).resolve().parent / "_bundle"
     if (bundled / "copier.yml").is_file():
         return bundled
+    # A PyInstaller executable unpacks its data beside a temporary copy of
+    # the code; sys._MEIPASS names that directory.
+    frozen = getattr(sys, "_MEIPASS", None)
+    if frozen and (Path(frozen) / "_bundle" / "copier.yml").is_file():
+        return Path(frozen) / "_bundle"
     raise FileNotFoundError(
         "Loftline's template is missing: neither a repository checkout nor a "
         "bundled copy was found beside the package. Reinstall the tool."

@@ -24,6 +24,7 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.5",
     "types-pyyaml>=6.0",
+    "pyinstaller>=6.10",
 ]
 
 [build-system]
