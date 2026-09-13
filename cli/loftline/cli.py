@@ -34,6 +34,7 @@ from .realise import realise as run_realise
 from .report import render_plan
 from .resolve import Derive, Inject, resolve
 from .secrets import GitHubSink, write_secrets
+from .setup import DEFAULT_SITE_WEB, run_setup
 from .site import DEFAULT_SITE, SiteClient, sync_project
 from .urlhandler import open_terminal, parse, register
 from .vault_sops import SopsAgeVault
@@ -713,3 +714,52 @@ def register_url_handler() -> None:
         typer.echo(register())
     except LoftlineError as exc:
         _fail(str(exc))
+
+
+class _TyperConsole:
+    """The wizard's conversation, on a terminal."""
+
+    def say(self, text: str) -> None:
+        typer.echo(text)
+
+    def ask_yes(self, question: str, default: bool = True) -> bool:
+        return bool(typer.confirm(question, default=default))
+
+    def ask(self, question: str, default: str = "") -> str:
+        return str(typer.prompt(question, default=default))
+
+    def ask_hidden(self, question: str) -> str:
+        return str(typer.prompt(question, hide_input=True, default=""))
+
+    def launch(self, url: str) -> None:
+        typer.echo(f"   Opening {url}")
+        typer.launch(url)
+
+
+@app.command()
+def setup(
+    site: SiteOption = DEFAULT_SITE,
+    site_web: Annotated[
+        str,
+        typer.Option("--site-web", help="The dashboard's address, for the browser."),
+    ] = DEFAULT_SITE_WEB,
+) -> None:
+    """Get this machine ready, one question at a time.
+
+    The tools Loftline drives, GitHub sign-in, an age key and a backup, an
+    encrypted vault in a private repository, the dashboard token, the
+    loftline:// handler and Claude Desktop. Each step checks first and asks
+    before changing anything, so it is safe to run again.
+    """
+    try:
+        run_setup(_TyperConsole(), site=site, site_web=site_web)
+    except LoftlineError as exc:
+        _fail(str(exc))
+
+
+@mcp_app.command("serve", hidden=True)
+def mcp_serve() -> None:
+    """Serve the MCP over stdio. Claude starts this; people do not."""
+    from .mcp_server import main as serve
+
+    serve()

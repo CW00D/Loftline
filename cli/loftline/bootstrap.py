@@ -136,15 +136,22 @@ def mcp_config(
     so its entry can reference the variable.
     """
     config = config or VaultConfig.from_env()
-    venv = venv or Path(sys.executable).resolve().parent
-    entry = venv / ("loftline-mcp.exe" if os.name == "nt" else "loftline-mcp")
+    if getattr(sys, "frozen", False):
+        # The built executable serves the MCP itself: `loftline mcp serve`.
+        command, args = sys.executable, ["mcp", "serve"]
+    else:
+        venv = venv or Path(sys.executable).resolve().parent
+        command = str(
+            venv / ("loftline-mcp.exe" if os.name == "nt" else "loftline-mcp")
+        )
+        args = []
 
     if client == "code":
         body = {
             "mcpServers": {
                 "loftline": {
-                    "command": str(entry),
-                    "args": [],
+                    "command": command,
+                    "args": args,
                     "env": {VAULT_ENV: f"${{{VAULT_ENV}}}"},
                 }
             }
@@ -175,5 +182,5 @@ def mcp_config(
     if tool_dirs:
         env["PATH"] = os.pathsep.join(tool_dirs)
 
-    body = {"mcpServers": {"loftline": {"command": str(entry), "args": [], "env": env}}}
+    body = {"mcpServers": {"loftline": {"command": command, "args": args, "env": env}}}
     return json.dumps(body, indent=2)

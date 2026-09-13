@@ -1,6 +1,6 @@
 [project]
 name = "loftline"
-version = "0.2.0"
+version = "0.3.0"
 description = "A scaffolder and provisioner: credential custody first, templating second."
 readme = "README.md"
 license = "MIT"

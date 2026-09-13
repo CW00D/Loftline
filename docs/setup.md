@@ -1,4 +1,11 @@
-# Setting up Loftline on your machine
+# Setting up Loftline
+
+The short way: download the executable from the dashboard's install page (or
+`uv tool install git+https://github.com/CW00D/Loftline`) and run
+`loftline setup`. It does everything below, asking before each step, and is
+safe to run again. The rest of this document is what it does, for when you
+want to do a step by hand or understand one.
+
 
 About half an hour, most of it making an encryption key and installing three
 small tools. At the end you have a private vault for your credentials, the
