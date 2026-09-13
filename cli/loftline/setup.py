@@ -416,8 +416,11 @@ def step_dashboard(
 def step_handler(console: Console, report: SetupReport) -> None:
     console.say("\n5. Store buttons on the dashboard")
     try:
-        report.note("url handler", True, register())
+        message = register()
+        console.say(f"   {message}")
+        report.note("url handler", True, message)
     except UrlError as exc:
+        console.say(f"   {exc}")
         report.note("url handler", False, str(exc))
 
 
@@ -452,17 +455,29 @@ def step_claude(
     if not path.parent.exists():
         report.note("claude desktop", False, "not installed here; skipped")
         return
-    if not console.ask_yes(
-        "   Add Loftline to Claude Desktop, so a conversation can drive it?"
-    ):
-        report.note("claude desktop", False, "skipped")
-        return
     try:
         addition = json.loads(entry())
     except LoftlineError as exc:
         report.note("claude desktop", False, str(exc))
         return
     existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8") or "{}")
+        except ValueError:
+            current = {}
+        if (
+            current.get("mcpServers", {}).get("loftline")
+            == addition["mcpServers"]["loftline"]
+        ):
+            console.say("   Already added.")
+            report.note("claude desktop", True, "already added")
+            return
+    if not console.ask_yes(
+        "   Add Loftline to Claude Desktop, so a conversation can drive it?"
+    ):
+        report.note("claude desktop", False, "skipped")
+        return
     if path.exists():
         try:
             existing = json.loads(path.read_text(encoding="utf-8") or "{}")
