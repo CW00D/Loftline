@@ -1483,3 +1483,41 @@ Amended 2026-09-13 (ADR-030): the Terraform variables always name both
 GitHub environments. They hold secrets and cost nothing, and removing one
 with the spec's list destroyed a real environment on the first project.
 Render resources still follow the spec.
+
+---
+
+## ADR-034: One executable, one setup conversation
+
+**Status:** Accepted. Extends ADR-020 and ADR-033.
+
+**Context.** The install path was a clone, a package manager, five
+commands and a JSON file to edit. It suited the author and nobody else.
+
+**Decision.**
+
+1. **Loftline ships as one executable per platform,** built by PyInstaller
+   with the template, the descriptors and the Terraform module inside it,
+   attached to a GitHub release on every tag. The Python wheel ships too,
+   for people who prefer `uv tool install`. Both resolve their bundle
+   through `paths.py`, so the checkout, the wheel and the executable are
+   the same tool.
+2. **`loftline setup` is the install page, done.** It checks each tool and
+   offers to install the missing ones with the platform's package manager,
+   signs in to GitHub, generates the machine's age key and a backup key,
+   creates the vault and persists its location, pushes the vault to a
+   private repository, opens the dashboard for a token and stores it,
+   registers the URL handler, and writes the Claude Desktop entry. Every
+   step checks first and asks; running it again is harmless. The console
+   and the machine are injected, so the whole conversation is tested
+   without a terminal.
+3. **The executable serves the MCP itself** (`loftline mcp serve`), so the
+   Claude entry names one file wherever it was put.
+
+**Consequences.**
+
+- The executable is unsigned; Windows warns once. Code signing is a
+  certificate in the owner's name and a later, paid step.
+- Docker stays outside setup: it is a desktop application with its own
+  installer, needed only to run a generated project locally.
+- The install page is three sections: download, `loftline setup`, a
+  project.
