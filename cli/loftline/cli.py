@@ -29,17 +29,19 @@ from .bootstrap import init_vault, mcp_config
 from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
 from .generate import generate
-from .models import DescriptorSet, Spec, load_descriptors, load_spec
+from .models import DescriptorSet, load_descriptors, load_spec
+from .orchestrate import (
+    copy_between,
+    provision_from_vault,
+    realise_from_dashboard,
+    render_provision,
+    render_realise,
+    site_client,
+)
 from .paths import credentials_file
-from .providers.aura import AuraClient
-from .providers.cloudflare import CloudflareClient
-from .providers.render import RenderClient
-from .providers.stripe import StripeClient
-from .provision import provision
-from .realise import RealiseError, spec_from_dashboard
-from .realise import realise as run_realise
+from .realise import RealiseError
 from .report import render_plan
-from .resolve import Derive, Inject, resolve
+from .resolve import resolve
 from .secrets import GitHubSink, write_secrets
 from .setup import DEFAULT_SITE_WEB, run_setup
 from .site import DEFAULT_SITE, SiteClient, sync_project
@@ -47,8 +49,6 @@ from .urlhandler import open_terminal, parse, register
 from .vault_sops import SopsAgeVault
 from .vaults import (
     choose,
-    copy_credentials,
-    parse_target,
     register_vault,
     require_project_vault,
 )
@@ -288,15 +288,12 @@ def vault_copy(
     ],
     names: Annotated[
         list[str] | None,
-        typer.Argument(
-            help="Credential names to copy. Default: every one the spec holds."
-        ),
+        typer.Argument(help="Credential names to copy. Default: what the spec holds."),
     ] = None,
     spec: Annotated[
         Path | None,
         typer.Option(
-            "--spec",
-            help="A loftline.yml: copy every credential it needs that is held.",
+            "--spec", help="A loftline.yml: copy every held credential it needs."
         ),
     ] = None,
     source: Annotated[
@@ -309,9 +306,7 @@ def vault_copy(
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     replace: Annotated[
         bool,
-        typer.Option(
-            "--replace", help="Overwrite values the target vault already has."
-        ),
+        typer.Option("--replace", help="Overwrite values the target already has."),
     ] = False,
 ) -> None:
     """Copy credentials from one vault into another, marked for rotation.
@@ -322,71 +317,27 @@ def vault_copy(
     dashboard say so until a fresh value replaces it with `vault set
     --replace`: a credential two vaults hold should become one vault's alone.
     """
-    if not names and spec is None:
-        _fail("Name the credentials to copy, or pass --spec to copy what a spec holds.")
-    if source == to:
-        _fail("--from and --to name the same vault.")
     try:
-        from_org, from_project = parse_target(source)
-        to_org, to_project = parse_target(to)
-        if to_project and require_project_vault(to_project) is None:
-            pass  # unreachable; require_project_vault raises when unregistered
-        source_choice = choose(None, from_org, from_project)
-        target_choice = choose(None, to_org, to_project)
-        if to_project and target_choice.kind != "project":
-            require_project_vault(to_project)
-        if from_project and source_choice.kind != "project":
-            require_project_vault(from_project)
-        source_config, target_config = source_choice.config, target_choice.config
-        require(source_config, Capability.DECRYPT)
-        require(target_config, Capability.WRITE)
-        assert source_config.vault_path is not None
-        assert target_config.vault_path is not None
-        descriptors = load_descriptors(credentials)
-        source_store = SopsAgeVault(source_config.vault_path)
-        target = SopsAgeVault(target_config.vault_path)
-        held = set(source_store.list_paths())
-
-        paths: list[str] = []
-        if spec is not None:
-            resolution = resolve(load_spec(spec), descriptors, source_store.index())
-            paths += [entry.vault_path for entry in resolution.inject]
-        for name in names or []:
-            descriptor = descriptors.get(name)
-            if descriptor is None or descriptor.vault_path is None:
-                _fail(f"{name} is not a credential that lives in a vault.")
-            if descriptor.vault_path not in held:
-                _fail(f"{name} is not in {source_choice.label}; nothing to copy.")
-            paths.append(descriptor.vault_path)
-        if not paths:
-            _fail(f"Nothing to copy: {source_choice.label} holds none of these.")
-
-        copied = copy_credentials(
-            source_store,
-            target,
-            dict.fromkeys(paths),
-            mark_from=source_choice.mark,
+        report = copy_between(
+            to,
+            names=names or (),
+            spec_path=spec,
+            source=source,
+            credentials=credentials,
             replace=replace,
         )
     except LoftlineError as exc:
         _fail(str(exc))
 
-    flag = (
-        f" --org {to_org}"
-        if to_org
-        else (f" --project-vault {to_project}" if to_project else "")
-    )
-    typer.echo(f"Copied {len(copied)} credential(s) into {target_choice.label}:")
-    for path in copied:
+    typer.echo(f"Copied {len(report.copied)} credential(s) into {report.target.label}:")
+    for path in report.copied:
         typer.echo(f"  {path}")
     typer.echo(
         "Each is marked as copied. Reissue it with the vendor and store the new value "
-        f"with `loftline vault set <name>{flag} --replace`; the mark clears."
+        f"with `loftline vault set <name>{report.target_flag} --replace`; the mark "
+        "clears."
     )
-    typer.echo(
-        f"{target_config.vault_path.name} has changed. Commit and push its "
-        "vault repository."
-    )
+    typer.echo("The target vault has changed. Commit and push its vault repository.")
 
 
 @vault_app.command("set")
@@ -646,85 +597,22 @@ def provision_command(
     Aura API key and the Render API key are read from the vault.
     """
     try:
-        project = load_spec(spec)
-        config = choose(vault, org, project.project_name).config
-        require(config, Capability.DECRYPT)
-        assert config.vault_path is not None
-        github = GitHubSink(repo)
-        github.preflight()
-        descriptors = load_descriptors(credentials)
-        store = SopsAgeVault(config.vault_path)
-        resolution = resolve(project, descriptors, store.index())
-        targets: list[Inject | Derive] = [*resolution.inject, *resolution.derive]
-        for environment_name in sorted({e for t in targets for e in t.environments}):
-            github.ensure_environment(environment_name)
-        render = RenderClient(store.get(descriptors["render_api_key"].vault_path or ""))
-        # Vendor clients only for what the spec uses: an Aura key is not asked
-        # of a Postgres project, nor a Stripe key of one without payments.
-        aura = (
-            AuraClient(
-                store.get(descriptors["aura_client_id"].vault_path or ""),
-                store.get(descriptors["aura_client_secret"].vault_path or ""),
-            )
-            if project.database == "aura"
-            else None
-        )
-        stripe = (
-            StripeClient(store.get(descriptors["stripe_secret_key"].vault_path or ""))
-            if project.payments
-            else None
-        )
-        dns = (
-            CloudflareClient(
-                store.get(descriptors["cloudflare_api_token"].vault_path or "")
-            )
-            if project.domain
-            else None
-        )
-        report = provision(
-            project,
-            resolution,
-            store,
-            github,
-            render,
-            aura,
-            stripe=stripe,
-            dns=dns,
+        project_name = load_project(spec).project_name
+        report = provision_from_vault(
+            spec,
+            repo,
+            org=org,
+            vault=vault,
+            credentials=credentials,
             environments=environment,
-            instance_type=aura_type,
+            aura_type=aura_type,
             region=region,
             deploy=not no_deploy,
         )
     except LoftlineError as exc:
         _fail(str(exc))
-
-    typer.echo(f"Provisioned {project.project_name} in {repo}")
-    for entry in report.environments:
-        health = {True: "healthy", False: "UNHEALTHY", None: "not checked"}[
-            entry.healthy
-        ]
-        typer.echo(
-            f"  {entry.environment:11} {entry.service}  database {entry.instance} "
-            f"({entry.instance_status})  deploy {entry.deploy_status or 'skipped'}  "
-            f"{health}"
-        )
-        if entry.url:
-            typer.echo(f"  {'':11} {entry.url}")
-        if entry.webhooks:
-            typer.echo(
-                f"  {'':11} Stripe webhooks registered: {', '.join(entry.webhooks)}"
-            )
-        if entry.web_service:
-            web_deploy = entry.web_deploy_status or "skipped"
-            typer.echo(f"  {'':11} {entry.web_service}  deploy {web_deploy}")
-        for hostname, status in entry.domains:
-            typer.echo(f"  {'':11} https://{hostname}  ({status})")
-        if entry.domains:
-            typer.echo(
-                f"  {'':11} Render issues each name's certificate after verifying it, "
-                "usually within minutes; until then browsers refuse the name."
-            )
-    typer.echo("No value was printed.")
+    for line in render_provision(report, project_name, repo):
+        typer.echo(line)
 
 
 @mcp_app.command("config")
@@ -878,15 +766,7 @@ def adopt_command(
 
 
 def _site_client(credentials: Path, site: str) -> SiteClient:
-    """The dashboard, signed in with the token in your personal vault."""
-    personal = VaultConfig.from_env()
-    require(personal, Capability.DECRYPT)
-    assert personal.vault_path is not None
-    descriptor = load_descriptors(credentials)["loftline_site_token"]
-    assert descriptor.vault_path is not None
-    return SiteClient(
-        SopsAgeVault(personal.vault_path).get(descriptor.vault_path), site=site
-    )
+    return site_client(credentials, site)
 
 
 @app.command()
@@ -982,75 +862,19 @@ def realise(
     project takes them from the organisation's vault.
     """
     try:
-        client = _site_client(credentials, site)
-        pulled = client.pull_project(name, org_slug=org)
-        if not pulled.get("spec"):
-            _fail(f"{name} has no spec on the dashboard; define it there first.")
-        if pulled["spec"].get("adopted"):
-            _fail(
-                f"{name} is an adopted project; there is nothing to realise. "
-                "Its hosting is already in place."
-            )
-        if pulled.get("vault") == "project" and not org:
-            # The dashboard says this project has a vault of its own; the
-            # machine must have it, or credentials would land in the wrong one.
-            require_project_vault(name)
-        chosen = choose(vault, org, name)
-        config = chosen.config
-        require(config, Capability.DECRYPT)
-        assert config.vault_path is not None
-        descriptors = load_descriptors(credentials)
-        store = SopsAgeVault(config.vault_path)
-        project_spec = spec_from_dashboard(dict(pulled["spec"]))
-        resolution = resolve(project_spec, descriptors, store.index())
-        if resolution.request:
-            names = ", ".join(r.name for r in resolution.request)
-            flag = (
-                f" --org {org}"
-                if org
-                else (f" --project-vault {name}" if chosen.kind == "project" else "")
-            )
-            _fail(
-                f"{name} still needs {names} in {chosen.label}. The dashboard's "
-                "project page lists how to get each; store them with "
-                f"`loftline vault set <name>{flag}` and re-run."
-            )
-
-        def do_generate(s: Spec, directory: Path) -> Path:
-            return generate(s, directory)
-
-        def do_secrets(s: Spec, repository: str) -> None:
-            sink = GitHubSink(repository)
-            sink.preflight()
-            for environment_name in s.environments:
-                sink.ensure_environment(environment_name)
-            write_secrets(resolve(s, descriptors, store.index()), store, sink)
-
-        report = run_realise(
-            project_spec,
+        report = realise_from_dashboard(
+            name,
             into,
-            generate=do_generate,
-            write_secrets=do_secrets,
+            org=org,
             terraform=terraform,
-        )
-        sync_project(
-            project_spec,
-            client,
-            repository=report.repository,
-            project_dir=report.directory,
-            org_slug=org,
-            resolution=resolution,
-            index=store.index(),
-            vault_kind=chosen.kind,
+            vault=vault,
+            credentials=credentials,
+            site=site,
         )
     except (LoftlineError, RealiseError) as exc:
         _fail(str(exc))
-    except KeyError:
-        _fail("credentials.yml has no loftline_site_token descriptor.")
-    typer.echo(f"Realised {report.project} at {report.directory}")
-    for step in report.steps:
-        typer.echo(f"  {step.name:11} {step.detail}")
-    typer.echo(f"  next        {report.next_step}")
+    for line in render_realise(report):
+        typer.echo(line)
 
 
 @app.command("url", hidden=True)

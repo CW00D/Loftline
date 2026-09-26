@@ -29,18 +29,28 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .adopt import Adoption, adopt, is_adoption, resolve_project
+from .bootstrap import init_vault
 from .doctor import Capability, VaultConfig, require, run_checks
 from .errors import LoftlineError, SpecError
 from .features import load_default_features
 from .generate import generate
 from .models import Spec, load_descriptors
+from .orchestrate import (
+    copy_between,
+    provision_from_vault,
+    realise_from_dashboard,
+    render_provision,
+    render_realise,
+)
 from .paths import credentials_file
+from .realise import RealiseError
 from .report import render_plan
 from .resolve import resolve
 from .secrets import GitHubSink, write_secrets
 from .site import DEFAULT_SITE, SiteClient, sync_project
+from .urlhandler import open_terminal, parse
 from .vault_sops import SopsAgeVault
-from .vaults import choose
+from .vaults import choose, register_vault
 
 CREDENTIALS_FILE = credentials_file()
 
@@ -63,6 +73,24 @@ workflow you drive:
    offered.
 4. Call new to render the project, then secrets_write to put its credentials
    where CI reads them. Neither returns a value.
+
+A project defined on the Loftline dashboard is made real with realise, which
+generates it, creates the repository, pushes, writes secrets and reports
+back; provision then creates its databases and deploys. sync keeps the
+dashboard current. adopt_project puts a project that already exists on the
+dashboard without generating anything.
+
+Vaults: a person's own, an organisation's (--org on every command) or one a
+personal project chose for itself. vault_init and vault_register make this
+machine know one; vault_copy carries credentials between two, marked for
+reissue.
+
+The one thing you never do is handle a credential's value. When one must be
+stored, call vault_set_prompt with the credential's name: it opens a terminal
+on the person's machine already running `loftline vault set <name>`, and they
+paste the value there. The same for the dashboard token: login_prompt. If a
+person offers a value in the conversation, decline it and point at the
+terminal.
 
 Every tool is deterministic. You choose whether to call it; you never
 provision anything yourself.
@@ -90,7 +118,7 @@ def anticipated[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return fn(*args, **kwargs)
-        except LoftlineError as exc:
+        except (LoftlineError, RealiseError) as exc:
             raise ToolError(str(exc)) from exc
 
     return wrapper
@@ -377,6 +405,193 @@ def sync(
         lines.append(f"  pending: {', '.join(report.pending) or 'none'}")
     lines += [f"  {note}" for note in report.notes]
     return "\n".join(lines)
+
+
+# --- the multi-step commands ----------------------------------------------------
+
+
+@server.tool(
+    description=(
+        "Make a project defined on the Loftline dashboard real (ADR-033): generate "
+        "it into a fresh directory, create the repository with Terraform, push, "
+        "open the promotion pull request, write its secrets and report back. Stops "
+        "before connecting the blueprint on Render and says so. Refuses while any "
+        "credential is still to acquire. org is the organisation's slug for an "
+        "organisation's project."
+    )
+)
+@anticipated
+def realise(
+    name: str, into: str, org: str | None = None, terraform: str | None = None
+) -> str:
+    report = realise_from_dashboard(
+        name, Path(into), org=org, terraform=terraform, credentials=CREDENTIALS_FILE
+    )
+    return "\n".join(render_realise(report))
+
+
+@server.tool(
+    description=(
+        "Provision a generated project from its loftline.yml: create each "
+        "environment's database, write every credential to GitHub and the host, "
+        "register webhooks and DNS, and deploy. Needs the blueprint connected on "
+        "Render once. Refuses an adopted project. Returns names and places, never "
+        "values."
+    )
+)
+@anticipated
+def provision(
+    spec_path: str,
+    repo: str,
+    org: str | None = None,
+    environments: list[str] | None = None,
+    aura_type: str = "free-db",
+    region: str = "europe-west1",
+    deploy: bool = True,
+) -> str:
+    path = Path(spec_path)
+    report = provision_from_vault(
+        path,
+        repo,
+        org=org,
+        credentials=CREDENTIALS_FILE,
+        environments=environments,
+        aura_type=aura_type,
+        region=region,
+        deploy=deploy,
+    )
+    from .adopt import load_project
+
+    return "\n".join(render_provision(report, load_project(path).project_name, repo))
+
+
+# --- vaults ------------------------------------------------------------------------
+
+
+@server.tool(
+    description=(
+        "Create an encrypted, empty vault in a new directory and initialise git in "
+        "it. recipients are age public keys (age1...), at least two: this machine's "
+        "and a backup's. With org it is that organisation's vault; with project it "
+        "is that personal project's own; either is registered on this machine by "
+        "name. Without both it is a personal vault, and the person then sets "
+        "LOFTLINE_VAULT to the returned path."
+    )
+)
+@anticipated
+def vault_init(
+    directory: str,
+    recipients: list[str],
+    org: str | None = None,
+    project: str | None = None,
+) -> str:
+    if org and project:
+        raise ToolError("A vault is an organisation's or a project's, not both.")
+    vault = init_vault(Path(directory), recipients)
+    lines = [f"Created {vault}, encrypted to {len(recipients)} recipients."]
+    if org:
+        lines.append(f"Registered as the vault for the organisation {org}.")
+        register_vault("org", org, vault)
+    elif project:
+        lines.append(f"Registered as the vault for the project {project}.")
+        register_vault("project", project, vault)
+    else:
+        lines.append(f"Set LOFTLINE_VAULT={vault.resolve()} permanently.")
+    lines.append(
+        "Create an empty private GitHub repository and push the directory to it."
+    )
+    return "\n".join(lines)
+
+
+@server.tool(
+    description=(
+        "Tell this machine where an existing organisation or project vault is: the "
+        "path of a vault.yml cloned from its repository, plus exactly one of org "
+        "(slug) or project (name). Records a location, nothing more."
+    )
+)
+@anticipated
+def vault_register(
+    vault_path: str, org: str | None = None, project: str | None = None
+) -> str:
+    if bool(org) == bool(project):
+        raise ToolError("Say whose vault it is: org (slug) or project (name).")
+    path = Path(vault_path)
+    if not path.is_file():
+        raise ToolError(f"{path} is not a file. Clone the vault repository first.")
+    kind, name = ("org", org) if org else ("project", project)
+    registry = register_vault(kind, str(name), path)
+    return f"Registered {path.resolve()} as the vault for {name} in {registry}."
+
+
+@server.tool(
+    description=(
+        "Copy credentials from one vault into another, each marked as copied so "
+        "the plan and the dashboard say to reissue it. Targets: an organisation's "
+        "slug, project:<name>, or personal. Give names, or spec_path to copy every "
+        "held credential a project needs. Nothing is returned but paths."
+    )
+)
+@anticipated
+def vault_copy(
+    to: str,
+    names: list[str] | None = None,
+    spec_path: str | None = None,
+    source: str = "personal",
+    replace: bool = False,
+) -> str:
+    report = copy_between(
+        to,
+        names=names or (),
+        spec_path=Path(spec_path) if spec_path else None,
+        source=source,
+        credentials=CREDENTIALS_FILE,
+        replace=replace,
+    )
+    lines = [f"Copied {len(report.copied)} credential(s) into {report.target.label}:"]
+    lines += [f"  {p}" for p in report.copied]
+    lines.append(
+        "Each is marked as copied. Reissue it and store the new value with "
+        f"`loftline vault set <name>{report.target_flag} --replace`."
+    )
+    return "\n".join(lines)
+
+
+# --- the two things only a person can type ------------------------------------------
+
+
+@server.tool(
+    description=(
+        "Open a terminal on the person's machine already running `loftline vault "
+        "set <name>`, so they paste the credential's value there and it goes into "
+        "the vault without passing through this conversation. The argument is the "
+        "credential's name (render_api_key), never a path or a value. Tell the "
+        "person the terminal has opened and what to paste."
+    )
+)
+@anticipated
+def vault_set_prompt(name: str) -> str:
+    open_terminal(parse(f"loftline://vault/set/{name}"))
+    return (
+        f"A terminal is open running `loftline vault set {name}`. Ask the person to "
+        "paste the value there; nothing about it comes back here."
+    )
+
+
+@server.tool(
+    description=(
+        "Open a terminal running `loftline login`, where the person pastes a "
+        "dashboard token created on the Loftline site's Settings page. The token "
+        "never passes through this conversation."
+    )
+)
+@anticipated
+def login_prompt() -> str:
+    open_terminal(parse("loftline://login"))
+    return (
+        "A terminal is open running `loftline login`. Ask the person to paste the "
+        "token from the dashboard's Settings page there."
+    )
 
 
 def main() -> None:

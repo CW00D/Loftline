@@ -100,6 +100,13 @@ async def test_the_tools_are_exactly_the_commands_plus_the_views() -> None:
         "secrets_write",
         "sync",
         "adopt_project",
+        "realise",
+        "provision",
+        "vault_init",
+        "vault_register",
+        "vault_copy",
+        "vault_set_prompt",
+        "login_prompt",
     }
 
 
@@ -313,3 +320,60 @@ async def test_secrets_write_refuses_outstanding_by_default(
 
     assert result.is_error
     assert "still to acquire" in text(result)
+
+
+# --- the two prompts never carry a value ----------------------------------------------
+
+
+async def test_vault_set_prompt_opens_a_terminal_and_returns_no_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        mcp_server, "open_terminal", lambda action, **kw: opened.append(action.argv)
+    )
+
+    async with Client(server) as client:
+        result = await client.call_tool("vault_set_prompt", {"name": "render_api_key"})
+        login = await client.call_tool("login_prompt", {})
+        tools = (await client.list_tools()).tools
+
+    assert opened == [
+        ("loftline", "vault", "set", "render_api_key"),
+        ("loftline", "login"),
+    ]
+    assert "paste the value there" in text(result)
+    assert "Settings page" in text(login)
+    schema = next(t for t in tools if t.name == "vault_set_prompt").input_schema
+    assert list(schema["properties"]) == ["name"]
+
+
+async def test_vault_set_prompt_refuses_a_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_server, "open_terminal", lambda action, **kw: None)
+
+    async with Client(server) as client:
+        bad = await client.call_tool(
+            "vault_set_prompt", {"name": "loftline/render/api_key"}
+        )
+
+    assert bad.is_error
+    assert "vault/set/<credential name>" in text(bad)
+
+
+async def test_vault_register_records_a_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = tmp_path / "vaults.yml"
+    monkeypatch.setenv("LOFTLINE_VAULTS", str(registry))
+    vault = tmp_path / "vault.yml"
+    vault.write_text("loftline: {}\n", encoding="utf-8")
+
+    async with Client(server) as client:
+        ok = await client.call_tool(
+            "vault_register", {"vault_path": str(vault), "org": "acme"}
+        )
+        neither = await client.call_tool("vault_register", {"vault_path": str(vault)})
+
+    assert "acme" in text(ok)
+    assert registry.exists()
+    assert neither.is_error

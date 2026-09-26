@@ -52,9 +52,11 @@ def parse(link: str) -> Action:
         and NAME.match(path[2])
     ):
         return Action(("loftline", "vault", "set", path[2]), f"Store {path[2]}")
+    if path == ["login"]:
+        return Action(("loftline", "login"), "Sign in to the Loftline dashboard")
     raise UrlError(
-        f"unknown {SCHEME}:// link: {link}. The only kind is "
-        f"{SCHEME}://vault/set/<credential name>."
+        f"unknown {SCHEME}:// link: {link}. The kinds are "
+        f"{SCHEME}://vault/set/<credential name> and {SCHEME}://login."
     )
 
 
