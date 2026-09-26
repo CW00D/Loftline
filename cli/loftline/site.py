@@ -33,6 +33,7 @@ from .models import Spec
 from .providers import Transport, decode, urllib_transport
 from .provision import hostnames, service_name, web_service_name
 from .resolve import Resolution
+from .vault import VaultIndex
 
 # Where the dashboard's API lives. Production, when it exists, is
 # https://api.loftline.org; until then the staging site is the site.
@@ -141,14 +142,26 @@ class SiteLike(Protocol):
 # --- what goes up: the spec, the live status, the credential plan --------------
 
 
-def credentials_plan(resolution: Resolution) -> list[dict[str, Any]]:
+def credentials_plan(
+    resolution: Resolution, index: VaultIndex | None = None
+) -> list[dict[str, Any]]:
     """The plan as the dashboard shows it: each credential's name, state and
     how to get it, with the exact command to store it. Never a value."""
     plan: list[dict[str, Any]] = []
     for held in resolution.inject:
-        plan.append(
-            {"name": held.name, "state": "held", "github_secret": held.github_secret}
-        )
+        entry: dict[str, Any] = {
+            "name": held.name,
+            "state": "held",
+            "github_secret": held.github_secret,
+        }
+        copied_from = index.rotate_from(held.vault_path) if index else None
+        if copied_from:
+            # Copied in from another vault when the project moved; the value
+            # should be reissued so this vault holds one nobody else does.
+            entry["rotate_from"] = copied_from
+            entry["command"] = f"loftline vault set {held.name} --replace"
+            entry["link"] = f"loftline://vault/set/{held.name}"
+        plan.append(entry)
     for derived in resolution.derive:
         plan.append(
             {
@@ -327,6 +340,7 @@ def sync_project(
     project_dir: Path | None,
     org_slug: str | None = None,
     resolution: Resolution | None = None,
+    index: VaultIndex | None = None,
     health: Callable[[str], bool] = http_health,
     on_github: Callable[[str], set[str]] = github_collaborators,
 ) -> SyncReport:
@@ -334,7 +348,8 @@ def sync_project(
     for the administrator to apply."""
     status = live_status(spec, health=health)
     if resolution is not None:
-        status["credentials"] = credentials_plan(resolution)
+        status["credentials"] = credentials_plan(resolution, index)
+    status["vault"] = "organisation" if org_slug else "personal"
     summary = project_summary(project_dir)
     if summary:
         status["summary"] = summary

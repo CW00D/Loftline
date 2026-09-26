@@ -39,6 +39,7 @@ from .resolve import resolve
 from .secrets import GitHubSink, write_secrets
 from .site import DEFAULT_SITE, SiteClient, sync_project
 from .vault_sops import SopsAgeVault
+from .vaults import vault_config
 
 CREDENTIALS_FILE = credentials_file()
 
@@ -108,8 +109,9 @@ def _parse_spec(spec: str) -> Spec:
         raise SpecError(f"the spec is not valid:\n{exc}") from exc
 
 
-def _config() -> VaultConfig:
-    return VaultConfig.from_env()
+def _config(org: str | None = None) -> VaultConfig:
+    """The vault for a project: an organisation's if `org` is given (ADR-035)."""
+    return vault_config(None, org)
 
 
 def _vault(config: VaultConfig) -> SopsAgeVault:
@@ -180,8 +182,8 @@ def doctor() -> list[dict[str, str]]:
     description="The credential paths held in the vault. Values are never read."
 )
 @anticipated
-def vault_list() -> list[str]:
-    config = _config()
+def vault_list(org: str | None = None) -> list[str]:
+    config = _config(org)
     require(config, Capability.READ_INDEX)
     return _vault(config).list_paths()
 
@@ -193,8 +195,8 @@ def vault_list() -> list[str]:
     )
 )
 @anticipated
-def plan(spec: str) -> str:
-    config = _config()
+def plan(spec: str, org: str | None = None) -> str:
+    config = _config(org)
     require(config, Capability.READ_INDEX)
     project = _parse_spec(spec)
     descriptors = load_descriptors(CREDENTIALS_FILE)
@@ -202,7 +204,7 @@ def plan(spec: str) -> str:
     resolution = resolve(project, descriptors, index)
     assert config.vault_path is not None
     return render_plan(
-        project, resolution, config.vault_path, Path("<spec>"), len(index)
+        project, resolution, config.vault_path, Path("<spec>"), len(index), index
     )
 
 
@@ -213,8 +215,10 @@ def plan(spec: str) -> str:
     )
 )
 @anticipated
-def new(spec: str, destination: str, force: bool = False) -> str:
-    config = _config()
+def new(
+    spec: str, destination: str, force: bool = False, org: str | None = None
+) -> str:
+    config = _config(org)
     require(config, Capability.READ_INDEX)
     project = _parse_spec(spec)
     descriptors = load_descriptors(CREDENTIALS_FILE)
@@ -250,9 +254,13 @@ def new(spec: str, destination: str, force: bool = False) -> str:
 )
 @anticipated
 def secrets_write(
-    spec: str, repo: str, partial: bool = False, rotate: bool = False
+    spec: str,
+    repo: str,
+    partial: bool = False,
+    rotate: bool = False,
+    org: str | None = None,
 ) -> str:
-    config = _config()
+    config = _config(org)
     require(config, Capability.DECRYPT)
     sink = GitHubSink(repo)
     sink.preflight()
@@ -288,13 +296,16 @@ def sync(
     project_dir: str | None = None,
     org: str | None = None,
 ) -> str:
-    config = _config()
-    require(config, Capability.DECRYPT)
+    personal = _config()
+    require(personal, Capability.DECRYPT)
     descriptors = load_descriptors(CREDENTIALS_FILE)
     descriptor = descriptors["loftline_site_token"]
     assert descriptor.vault_path is not None
+    client = SiteClient(_vault(personal).get(descriptor.vault_path), site=DEFAULT_SITE)
+    config = _config(org)
+    require(config, Capability.DECRYPT)
     store = _vault(config)
-    client = SiteClient(store.get(descriptor.vault_path), site=DEFAULT_SITE)
+    index = store.index()
     project = _parse_spec(spec)
     report = sync_project(
         project,
@@ -302,7 +313,8 @@ def sync(
         repository=repo,
         project_dir=Path(project_dir) if project_dir else None,
         org_slug=org,
-        resolution=resolve(project, descriptors, store.index()),
+        resolution=resolve(project, descriptors, index),
+        index=index,
     )
     lines = [f"Synced {report.project}"]
     lines += [

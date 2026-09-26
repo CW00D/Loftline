@@ -38,6 +38,12 @@ from .setup import DEFAULT_SITE_WEB, run_setup
 from .site import DEFAULT_SITE, SiteClient, sync_project
 from .urlhandler import open_terminal, parse, register
 from .vault_sops import SopsAgeVault
+from .vaults import (
+    copy_credentials,
+    register_org_vault,
+    vault_config,
+    vault_label,
+)
 
 app = typer.Typer(
     help="Scaffold and provision applications, credentials first.",
@@ -61,6 +67,15 @@ VaultOption = Annotated[
     Path | None,
     typer.Option(
         "--vault", help="Path to the SOPS-encrypted vault file.", show_default=False
+    ),
+]
+OrgOption = Annotated[
+    str | None,
+    typer.Option(
+        "--org",
+        help="Dashboard organisation slug. Its project uses the organisation's "
+        "vault, registered on this machine, instead of your personal one.",
+        show_default=False,
     ),
 ]
 CredentialsOption = Annotated[
@@ -105,9 +120,12 @@ def doctor(vault: VaultOption = None) -> None:
 
 
 @vault_app.command("list")
-def vault_list(vault: VaultOption = None) -> None:
+def vault_list(vault: VaultOption = None, org: OrgOption = None) -> None:
     """Print the paths held in the vault. Values are never read."""
-    config = VaultConfig.from_env(vault)
+    try:
+        config = vault_config(vault, org)
+    except LoftlineError as exc:
+        _fail(str(exc))
     try:
         require(config, Capability.READ_INDEX)
         assert config.vault_path is not None
@@ -115,10 +133,15 @@ def vault_list(vault: VaultOption = None) -> None:
     except LoftlineError as exc:
         _fail(str(exc))
 
+    index = SopsAgeVault(config.vault_path).index()
     for path in paths:
-        typer.echo(path)
+        copied_from = index.rotate_from(path)
+        typer.echo(
+            f"{path}  (copied from {copied_from}; reissue)" if copied_from else path
+        )
     typer.echo(
-        f"\n{len(paths)} path(s) in {config.vault_path}. No value was decrypted."
+        f"\n{len(paths)} path(s) in {config.vault_path} ({vault_label(org)}). "
+        "No value was decrypted."
     )
 
 
@@ -132,24 +155,158 @@ def vault_init(
             help="An age public key (age1...). Pass twice: this machine and a backup.",
         ),
     ],
+    org: Annotated[
+        str | None,
+        typer.Option(
+            "--org",
+            help="Make this an organisation's vault and register it here by slug.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
     """Create an encrypted, empty vault and initialise git in it.
 
     Writes the SOPS configuration, an empty vault encrypted to the given
-    recipients, and a .gitignore that keeps key material out.
+    recipients, and a .gitignore that keeps key material out. With --org the
+    vault is an organisation's, and this machine remembers it by slug so
+    `--org <slug>` on every other command finds it.
     """
     try:
         vault = init_vault(directory, recipient)
+        if org:
+            registry = register_org_vault(org, vault)
     except LoftlineError as exc:
         _fail(str(exc))
 
     typer.echo(f"Created {vault}, encrypted to {len(recipient)} recipients.")
+    if org:
+        typer.echo(f"Registered as the vault for {org} in {registry}.")
     typer.echo("Next:")
-    typer.echo(f"  set LOFTLINE_VAULT={vault.resolve()} permanently")
+    if org:
+        typer.echo(f"  use --org {org} on plan, sync, realise and vault set")
+    else:
+        typer.echo(f"  set LOFTLINE_VAULT={vault.resolve()} permanently")
     typer.echo(
         "  create an empty private GitHub repository and push this directory to it"
     )
     typer.echo("  loftline doctor")
+
+
+@vault_app.command("register")
+def vault_register(
+    org: Annotated[str, typer.Argument(help="The organisation's dashboard slug.")],
+    vault: Annotated[
+        Path, typer.Argument(help="Its vault.yml, cloned from the vault repository.")
+    ],
+) -> None:
+    """Tell this machine where an organisation's existing vault is.
+
+    For a second administrator who has cloned the organisation's vault
+    repository. Records a location, nothing more.
+    """
+    if not vault.is_file():
+        _fail(f"{vault} is not a file. Clone the vault repository first.")
+    try:
+        registry = register_org_vault(org, vault)
+    except LoftlineError as exc:
+        _fail(str(exc))
+    typer.echo(f"Registered {vault.resolve()} as the vault for {org} in {registry}.")
+
+
+@vault_app.command("copy")
+def vault_copy(
+    to: Annotated[
+        str,
+        typer.Option(
+            "--to", help="Slug of the organisation whose vault receives them."
+        ),
+    ],
+    names: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Credential names to copy. Default: every one the spec holds."
+        ),
+    ] = None,
+    spec: Annotated[
+        Path | None,
+        typer.Option(
+            "--spec",
+            help="A loftline.yml: copy every credential it needs that is held.",
+        ),
+    ] = None,
+    source_org: Annotated[
+        str | None,
+        typer.Option(
+            "--from", help="Copy from this organisation's vault instead of your own."
+        ),
+    ] = None,
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace", help="Overwrite values the target vault already has."
+        ),
+    ] = False,
+) -> None:
+    """Copy credentials into an organisation's vault, marked for rotation.
+
+    For a project that has moved into an organisation. Each value is decrypted
+    from the source vault and stored straight into the target; nothing is
+    printed. Every copy is marked as copied, and the plan and the dashboard
+    say so until a fresh value replaces it with `vault set --replace`: a
+    credential two vaults hold should become one the organisation holds alone.
+    """
+    if not names and spec is None:
+        _fail("Name the credentials to copy, or pass --spec to copy what a spec holds.")
+    if source_org == to:
+        _fail("--from and --to name the same organisation.")
+    try:
+        source_config = vault_config(None, source_org)
+        target_config = vault_config(None, to)
+        require(source_config, Capability.DECRYPT)
+        require(target_config, Capability.WRITE)
+        assert source_config.vault_path is not None
+        assert target_config.vault_path is not None
+        descriptors = load_descriptors(credentials)
+        source = SopsAgeVault(source_config.vault_path)
+        target = SopsAgeVault(target_config.vault_path)
+        held = set(source.list_paths())
+
+        paths: list[str] = []
+        if spec is not None:
+            resolution = resolve(load_spec(spec), descriptors, source.index())
+            paths += [entry.vault_path for entry in resolution.inject]
+        for name in names or []:
+            descriptor = descriptors.get(name)
+            if descriptor is None or descriptor.vault_path is None:
+                _fail(f"{name} is not a credential that lives in a vault.")
+            if descriptor.vault_path not in held:
+                _fail(f"{name} is not in {vault_label(source_org)}; nothing to copy.")
+            paths.append(descriptor.vault_path)
+        if not paths:
+            _fail(f"Nothing to copy: {vault_label(source_org)} holds none of these.")
+
+        copied = copy_credentials(
+            source,
+            target,
+            dict.fromkeys(paths),
+            mark_from=source_org or "personal",
+            replace=replace,
+        )
+    except LoftlineError as exc:
+        _fail(str(exc))
+
+    typer.echo(f"Copied {len(copied)} credential(s) into {vault_label(to)}:")
+    for path in copied:
+        typer.echo(f"  {path}")
+    typer.echo(
+        "Each is marked as copied. Reissue it with the vendor and store the new value "
+        f"with `loftline vault set <name> --org {to} --replace`; the mark clears."
+    )
+    typer.echo(
+        f"{target_config.vault_path.name} has changed. Commit and push the "
+        "organisation's vault repository."
+    )
 
 
 @vault_app.command("set")
@@ -158,6 +315,7 @@ def vault_set(
         str, typer.Argument(help="The credential's name in credentials.yml.")
     ],
     vault: VaultOption = None,
+    org: OrgOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     replace: Annotated[
         bool,
@@ -178,8 +336,8 @@ def vault_set(
     never accepted as an argument, so it cannot land in shell history, and it
     is never echoed back.
     """
-    config = VaultConfig.from_env(vault)
     try:
+        config = vault_config(vault, org)
         require(config, Capability.WRITE)
         assert config.vault_path is not None
         descriptors = load_descriptors(credentials)
@@ -210,7 +368,7 @@ def vault_set(
     except LoftlineError as exc:
         _fail(str(exc))
 
-    typer.echo(f"Stored {name} at {descriptor.vault_path}.")
+    typer.echo(f"Stored {name} at {descriptor.vault_path} in {vault_label(org)}.")
     typer.echo(
         f"{config.vault_path.name} has changed. Commit and push the vault repository "
         "so the value survives this machine."
@@ -240,6 +398,7 @@ def _read_value(name: str, from_stdin: bool) -> str:
 def plan(
     spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
     vault: VaultOption = None,
+    org: OrgOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
 ) -> None:
     """Report how every credential this spec needs will be resolved.
@@ -247,8 +406,8 @@ def plan(
     Reads the encrypted vault for its path index only, so it needs no age key
     and no `sops` binary. It performs no side effects whatever.
     """
-    config = VaultConfig.from_env(vault)
     try:
+        config = vault_config(vault, org)
         require(config, Capability.READ_INDEX)
         assert config.vault_path is not None
         project = load_spec(spec)
@@ -258,7 +417,9 @@ def plan(
     except LoftlineError as exc:
         _fail(str(exc))
 
-    typer.echo(render_plan(project, resolution, config.vault_path, spec, len(index)))
+    typer.echo(
+        render_plan(project, resolution, config.vault_path, spec, len(index), index)
+    )
 
 
 @app.command()
@@ -268,6 +429,7 @@ def new(
         Path, typer.Argument(help="Directory to render the project into.")
     ],
     vault: VaultOption = None,
+    org: OrgOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     force: Annotated[
         bool, typer.Option("--force", help="Render into a directory that is not empty.")
@@ -279,8 +441,8 @@ def new(
     fails here rather than at provisioning, then renders the template. Nothing
     is provisioned and no credential value is read.
     """
-    config = VaultConfig.from_env(vault)
     try:
+        config = vault_config(vault, org)
         require(config, Capability.READ_INDEX)
         assert config.vault_path is not None
         project = load_spec(spec)
@@ -311,6 +473,7 @@ def secrets_write(
         str, typer.Option("--repo", help="GitHub repository as OWNER/NAME.")
     ],
     vault: VaultOption = None,
+    org: OrgOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     partial: Annotated[
         bool,
@@ -330,8 +493,8 @@ def secrets_write(
     on stdin. Derived values are generated once per environment and kept on
     later runs. Nothing is printed but names and places.
     """
-    config = VaultConfig.from_env(vault)
     try:
+        config = vault_config(vault, org)
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         sink = GitHubSink(repo)
@@ -367,6 +530,7 @@ def provision_command(
         str, typer.Option("--repo", help="GitHub repository as OWNER/NAME.")
     ],
     vault: VaultOption = None,
+    org: OrgOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     environment: Annotated[
         list[str] | None,
@@ -397,8 +561,8 @@ def provision_command(
     Render dashboard, and every held credential present in the vault. The
     Aura API key and the Render API key are read from the vault.
     """
-    config = VaultConfig.from_env(vault)
     try:
+        config = vault_config(vault, org)
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         github = GitHubSink(repo)
@@ -545,6 +709,18 @@ def login(
     )
 
 
+def _site_client(credentials: Path, site: str) -> SiteClient:
+    """The dashboard, signed in with the token in your personal vault."""
+    personal = VaultConfig.from_env()
+    require(personal, Capability.DECRYPT)
+    assert personal.vault_path is not None
+    descriptor = load_descriptors(credentials)["loftline_site_token"]
+    assert descriptor.vault_path is not None
+    return SiteClient(
+        SopsAgeVault(personal.vault_path).get(descriptor.vault_path), site=site
+    )
+
+
 @app.command()
 def sync(
     spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
@@ -559,12 +735,7 @@ def sync(
             "receives the collaborators. Default: none written.",
         ),
     ] = None,
-    org: Annotated[
-        str | None,
-        typer.Option(
-            "--org", help="Dashboard organisation slug the project belongs to."
-        ),
-    ] = None,
+    org: OrgOption = None,
     vault: VaultOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     site: SiteOption = DEFAULT_SITE,
@@ -574,18 +745,18 @@ def sync(
 
     Nothing here touches GitHub with a credential: the collaborators are
     written for `terraform apply`, and confirmed against the repository
-    through `gh` afterwards.
+    through `gh` afterwards. The dashboard token is yours, so it comes from
+    your personal vault; the project's credentials come from its owner's.
     """
-    config = VaultConfig.from_env(vault)
     try:
+        client = _site_client(credentials, site)
+        config = vault_config(vault, org)
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
-        descriptor = load_descriptors(credentials)["loftline_site_token"]
-        assert descriptor.vault_path is not None
         store = SopsAgeVault(config.vault_path)
-        client = SiteClient(store.get(descriptor.vault_path), site=site)
+        index = store.index()
         project_spec = load_spec(spec)
-        resolution = resolve(project_spec, load_descriptors(credentials), store.index())
+        resolution = resolve(project_spec, load_descriptors(credentials), index)
         report = sync_project(
             project_spec,
             client,
@@ -593,12 +764,13 @@ def sync(
             project_dir=project,
             org_slug=org,
             resolution=resolution,
+            index=index,
         )
     except LoftlineError as exc:
         _fail(str(exc))
     except KeyError:
         _fail("credentials.yml has no loftline_site_token descriptor.")
-    typer.echo(f"Synced {report.project} with {site}")
+    typer.echo(f"Synced {report.project} with {site} ({vault_label(org)})")
     for name, healthy in report.environments:
         typer.echo(f"  {name:11} {'healthy' if healthy else 'UNHEALTHY'}")
     if report.wanted:
@@ -616,12 +788,7 @@ def realise(
         Path,
         typer.Option("--into", help="A fresh directory to generate the project into."),
     ],
-    org: Annotated[
-        str | None,
-        typer.Option(
-            "--org", help="Dashboard organisation slug the project belongs to."
-        ),
-    ] = None,
+    org: OrgOption = None,
     terraform: Annotated[
         str | None,
         typer.Option("--terraform", help="Path to terraform, if it is not on PATH."),
@@ -635,17 +802,16 @@ def realise(
     Generates it, creates its repository with Terraform, pushes the code and
     opens the promotion pull request, writes its secrets, and reports back.
     Stops before the one step only a person can do: connecting the blueprint
-    on Render. Every credential stays on this machine.
+    on Render. Every credential stays on this machine, and an organisation's
+    project takes them from the organisation's vault.
     """
-    config = VaultConfig.from_env(vault)
     try:
+        client = _site_client(credentials, site)
+        config = vault_config(vault, org)
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         descriptors = load_descriptors(credentials)
-        token_descriptor = descriptors["loftline_site_token"]
-        assert token_descriptor.vault_path is not None
         store = SopsAgeVault(config.vault_path)
-        client = SiteClient(store.get(token_descriptor.vault_path), site=site)
         pulled = client.pull_project(name, org_slug=org)
         if not pulled.get("spec"):
             _fail(f"{name} has no spec on the dashboard; define it there first.")
@@ -653,9 +819,11 @@ def realise(
         resolution = resolve(project_spec, descriptors, store.index())
         if resolution.request:
             names = ", ".join(r.name for r in resolution.request)
+            org_flag = f" --org {org}" if org else ""
             _fail(
-                f"{name} still needs {names}. The dashboard's project page lists how "
-                "to get each; store them with `loftline vault set <name>` and re-run."
+                f"{name} still needs {names} in {vault_label(org)}. The dashboard's "
+                "project page lists how to get each; store them with "
+                f"`loftline vault set <name>{org_flag}` and re-run."
             )
 
         def do_generate(s: Spec, directory: Path) -> Path:
@@ -682,6 +850,7 @@ def realise(
             project_dir=report.directory,
             org_slug=org,
             resolution=resolution,
+            index=store.index(),
         )
     except (LoftlineError, RealiseError) as exc:
         _fail(str(exc))

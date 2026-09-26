@@ -197,3 +197,36 @@ Run `loftline register-url-handler` once and the Store button opens a
 terminal already running `loftline vault set <name>`; otherwise copy the
 command. Either way the value is pasted into the terminal and never into the
 page.
+
+### Organisation vaults
+
+A project's credentials live in its owner's vault: yours for a personal
+project, the organisation's for an organisation's project. An organisation's
+vault is a second encrypted file in its own private repository, and every
+command that touches a project takes `--org <slug>` to use it.
+
+```
+loftline vault init ../acme-vault --org acme --recipient age1YOUR_KEY --recipient age1YOUR_BACKUP_KEY
+loftline vault set render_api_key --org acme
+loftline plan loftline.yml --org acme
+loftline sync loftline.yml --org acme --project .
+```
+
+`vault init --org` registers the new vault on this machine in
+`~/.loftline/vaults.yml`, a list of locations and nothing else. Another
+owner who has cloned the vault repository registers it with
+`loftline vault register acme <path to its vault.yml>`.
+
+Moving a project into an organisation on the dashboard switches its vault.
+Either store its credentials afresh into the organisation's vault, or carry
+across the ones it already used:
+
+```
+loftline vault copy --to acme --spec loftline.yml
+```
+
+Each copy is marked as copied from your personal vault. The plan, `vault
+list` and the project page say so until you reissue the credential with the
+vendor and store the new value with `loftline vault set <name> --org acme
+--replace`. A value two vaults hold should become one the organisation holds
+alone.

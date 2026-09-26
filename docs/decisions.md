@@ -1540,19 +1540,25 @@ attributed to anyone (the work this record clears the ground for).
 
 **Decision.**
 
-1. **Three kinds of vault: personal, organisation, project.** Each is its
-   own private repository holding one SOPS file, encrypted to the age
-   public keys of exactly the people who administer that thing. The
-   personal vault is the one `loftline setup` already makes. The others
-   are created by the first administrator's `sync` when the dashboard says
-   they should exist. A machine tracks several vaults, named in one
-   configuration file, and `LOFTLINE_VAULT` keeps meaning the personal one.
-2. **Resolution looks up in layers: project, then organisation, then
-   personal.** The resolver stays pure (ADR-002). It receives the union of
-   the vaults' paths, each labelled with the vault it came from, and its
-   partition names the vault a held credential is read from. `plan` says
-   which vault each missing credential belongs in, and `vault set` writes
-   there unless told otherwise.
+1. **Two kinds of vault: personal and organisation.** Each is its own
+   private repository holding one SOPS file, encrypted to the age public
+   keys of exactly the people who administer that thing. The personal
+   vault is the one `loftline setup` already makes and `LOFTLINE_VAULT`
+   names. An organisation's vault is created by an owner with
+   `loftline vault init --org <slug>` and registered on that machine by
+   slug in a small locations file (`~/.loftline/vaults.yml`), so that
+   `--org <slug>` on any command finds it. Per-project credentials remain
+   project-scoped *paths* inside a vault, as Stripe keys already are; a
+   separate vault per project was considered and dropped, because the
+   owner's vault is the only answer anyone gave.
+2. **A project's vault is its owner's, and only its owner's.** An
+   organisation's project reads and writes the organisation's vault and
+   nothing else; a personal project uses the personal vault. There is no
+   fallback between them, so there is no question to ask when a project is
+   defined. The resolver stays pure (ADR-002); it is simply handed the
+   index of the one vault that applies. The dashboard token is the
+   person's, so `sync` and `realise` read it from the personal vault
+   whatever the project.
 3. **A person's age public key is part of their profile.** `loftline login`
    pushes it; the dashboard stores it. Public keys are public. The site
    never sees a private key, a vault file, or a value (ADR-014).
@@ -1570,14 +1576,20 @@ attributed to anyone (the work this record clears the ground for).
    run `realise`, `provision` and Terraform; collaborators are repository
    collaborators and nothing more. An organisation's owners are
    administrators of every project it owns.
-6. **The vault is chosen when the project is defined.** The dashboard
-   form and the CLI ask one question, with defaults that follow the
-   owner. A personal project uses the personal vault unless the person
-   asks for a project vault. An organisation's project uses the
-   organisation's vault unless an owner asks for a project vault. The
-   answer is stored on the project; a project vault can be added later,
-   and `loftline vault move <name>` carries a credential across, which is
-   a decrypt and an encrypt on the administrator's machine.
+6. **A project moves between owners; its vault follows.** The dashboard
+   moves a personal project into an organisation the person owns, or
+   into a new organisation founded on it (a company built round a
+   project). The organisation's owners become its administrators, its
+   collaborators who have signed in join the organisation as members, and
+   from then on its credentials come from the organisation's vault. The
+   dashboard records the move; the carrying happens on the machine.
+   Either the credentials are stored afresh, or `loftline vault copy
+   --to <slug> --spec loftline.yml` decrypts each held value from the
+   personal vault and stores it in the organisation's, marked
+   `rotate_from: personal` in the file's plaintext keys. `plan`,
+   `vault list` and the dashboard show the mark until a fresh value
+   replaces it with `vault set --replace`, because a value two vaults
+   hold should become one the organisation holds alone.
 7. **An organisation may be linked to a GitHub organisation.** GitHub's
    API cannot create an organisation on a free account, so an owner
    creates it on GitHub and names it on the dashboard. Once linked, the
@@ -1596,13 +1608,17 @@ attributed to anyone (the work this record clears the ground for).
 - `sync` gains a side effect on the administrator's machine, writing to
   vault repositories, and must say so before it does it, the way `realise`
   narrates each step.
-- The vault adapter's `list_paths`, `get` and `set` take a vault name.
-  Everything the resolver tests today keeps passing with a single vault
-  labelled `personal`.
-- Rotation after removal is reported, not automated. The credentials
-  concerned are a vendor's to reissue, and each descriptor's acquire steps
-  already say how.
+- The vault adapter is unchanged: one file, four operations. Choosing the
+  file is a rule (`vaults.py`), not a new dimension on the adapter, and
+  every existing resolver test passes untouched.
+- Rotation, after a copy or after removing an administrator, is reported,
+  not automated. The credentials concerned are a vendor's to reissue, and
+  each descriptor's acquire steps already say how.
 - Per-project Apple and Play accounts become one descriptor change, a
-  scope of `project` on those two credentials, once project vaults exist.
-  Billing attribution (which credential a project actually used) is the
-  next record, not this one.
+  scope of `project` on those two credentials, since a project-scoped
+  path already lives in whichever vault the project uses. Billing
+  attribution (which credential a project actually used) is the next
+  record, not this one.
+- Points 3, 4 and 7 (public keys, sharing by re-encryption, GitHub
+  organisations) are decided here and built after the vault rule and the
+  move, which this record's first implementation covers.

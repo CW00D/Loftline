@@ -40,6 +40,10 @@ class VaultIndex:
     """Paths present in the vault, each with its acquisition time if known."""
 
     entries: Mapping[str, datetime | None] = field(default_factory=dict)
+    # Paths whose value was copied from another vault and should be reissued,
+    # each mapped to the vault it came from. Read from the file's plaintext
+    # keys, like everything else here.
+    rotation_pending: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_paths(cls, paths: Iterable[str]) -> VaultIndex:
@@ -47,8 +51,13 @@ class VaultIndex:
         return cls({path: None for path in paths})
 
     @classmethod
-    def from_mapping(cls, entries: Mapping[str, datetime | None]) -> VaultIndex:
-        return cls(dict(entries))
+    def from_mapping(
+        cls,
+        entries: Mapping[str, datetime | None],
+        *,
+        rotation_pending: Mapping[str, str] | None = None,
+    ) -> VaultIndex:
+        return cls(dict(entries), dict(rotation_pending or {}))
 
     @classmethod
     def from_adapter(cls, adapter: VaultAdapter) -> VaultIndex:
@@ -57,6 +66,10 @@ class VaultIndex:
 
     def acquired_at(self, path: str) -> datetime | None:
         return self.entries.get(path)
+
+    def rotate_from(self, path: str) -> str | None:
+        """The vault this value was copied from, if it is pending rotation."""
+        return self.rotation_pending.get(path)
 
     def __contains__(self, path: object) -> bool:
         return path in self.entries

@@ -28,6 +28,9 @@ from .vault import VaultIndex
 
 VALUE_KEY = "value"
 ACQUIRED_KEY = "acquired_at"
+# Set on a value copied from another vault (`loftline vault copy`). Plaintext,
+# like acquired_at, so the plan can say "reissue this" without decrypting.
+ROTATE_KEY = "rotate_from"
 METADATA_KEY = "sops"
 
 
@@ -51,13 +54,19 @@ class SopsAgeVault:
     def index(self) -> VaultIndex:
         """Paths and timestamps in one read, with nothing decrypted."""
         document = self._document()
+        nodes = {
+            path: self._node(document, path) for path in sorted(self._walk(document))
+        }
         return VaultIndex.from_mapping(
             {
-                path: _parse_timestamp(
-                    self._node(document, path).get(ACQUIRED_KEY), path
-                )
-                for path in sorted(self._walk(document))
-            }
+                path: _parse_timestamp(node.get(ACQUIRED_KEY), path)
+                for path, node in nodes.items()
+            },
+            rotation_pending={
+                path: str(node[ROTATE_KEY])
+                for path, node in nodes.items()
+                if node.get(ROTATE_KEY)
+            },
         )
 
     # --- the only operation that decrypts ------------------------------------
@@ -79,20 +88,32 @@ class SopsAgeVault:
 
     # --- writing -------------------------------------------------------------
 
-    def set(self, path: str, value: str, *, now: datetime | None = None) -> None:
-        """Store a value and stamp its acquisition time, in place."""
+    def set(
+        self,
+        path: str,
+        value: str,
+        *,
+        now: datetime | None = None,
+        rotate_from: str | None = None,
+    ) -> None:
+        """Store a value and stamp its acquisition time, in place.
+
+        `rotate_from` names the vault a copied value came from. A fresh value
+        carries no mark, so storing one again (`--replace`) clears it.
+        """
         _check_path(path)
         if not value:
             raise VaultError(f"refusing to store an empty value at {path}")
 
-        stamped = json.dumps(
-            {
-                VALUE_KEY: value,
-                ACQUIRED_KEY: (now or datetime.now(UTC))
-                .astimezone(UTC)
-                .strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-        )
+        node: dict[str, str] = {
+            VALUE_KEY: value,
+            ACQUIRED_KEY: (now or datetime.now(UTC))
+            .astimezone(UTC)
+            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        if rotate_from:
+            node[ROTATE_KEY] = rotate_from
+        stamped = json.dumps(node)
         index = "".join(f'["{segment}"]' for segment in path.split("/"))
         completed = self._run(["set", str(self.vault_path), index, stamped])
         if completed.returncode != 0:

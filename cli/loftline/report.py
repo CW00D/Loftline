@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .models import Spec
 from .resolve import Resolution
+from .vault import VaultIndex
 
 INDENT = "  "
 
@@ -21,10 +22,11 @@ def render_plan(
     vault_path: Path,
     spec_path: Path,
     path_count: int,
+    index: VaultIndex | None = None,
 ) -> str:
     lines: list[str] = ["", f"Loftline plan for {spec.project_name}", ""]
     lines += _summary(spec, vault_path, spec_path, path_count, resolution)
-    lines += _inject(resolution)
+    lines += _inject(resolution, index)
     lines += _derive(resolution)
     lines += _request(resolution)
     lines += _defer(resolution)
@@ -59,7 +61,7 @@ def _heading(title: str, count: int, subtitle: str) -> list[str]:
     return [f"{title} ({count}) {subtitle}", ""]
 
 
-def _inject(resolution: Resolution) -> list[str]:
+def _inject(resolution: Resolution, index: VaultIndex | None) -> list[str]:
     lines = _heading(
         "Inject",
         len(resolution.inject),
@@ -74,6 +76,12 @@ def _inject(resolution: Resolution) -> list[str]:
             f"[{', '.join(entry.environments) or 'no environment'}]"
         )
         lines.append(f"{INDENT}{INDENT}vault path  {entry.vault_path}")
+        copied_from = index.rotate_from(entry.vault_path) if index else None
+        if copied_from:
+            lines.append(
+                f"{INDENT}{INDENT}rotate      copied from {copied_from}; reissue it "
+                "and store the new value with --replace"
+            )
         if entry.expires_at is not None:
             lines.append(f"{INDENT}{INDENT}expires     {_stamp(entry.expires_at)}")
     lines.append("")
