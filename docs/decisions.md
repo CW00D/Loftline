@@ -1521,3 +1521,88 @@ commands and a JSON file to edit. It suited the author and nobody else.
   installer, needed only to run a generated project locally.
 - The install page is three sections: download, `loftline setup`, a
   project.
+
+---
+
+## ADR-035: Three kinds of vault, shared by re-encryption
+
+**Status:** Accepted. Extends ADR-014, ADR-032 and ADR-033. Amends the
+"second administrator" consequence of ADR-032.
+
+**Context.** Today there is one vault per administrator, encrypted to two
+age keys that both belong to that person. A second administrator is
+"a person given the vault", which in practice means moving a private key
+between people, the one thing an age key must never do. A team also wants
+credentials scoped to the group that pays for them: an organisation's
+Apple membership, a project's Stripe account, an individual's Render key.
+And the dashboard must know who administers what before billing can be
+attributed to anyone (the work this record clears the ground for).
+
+**Decision.**
+
+1. **Three kinds of vault: personal, organisation, project.** Each is its
+   own private repository holding one SOPS file, encrypted to the age
+   public keys of exactly the people who administer that thing. The
+   personal vault is the one `loftline setup` already makes. The others
+   are created by the first administrator's `sync` when the dashboard says
+   they should exist. A machine tracks several vaults, named in one
+   configuration file, and `LOFTLINE_VAULT` keeps meaning the personal one.
+2. **Resolution looks up in layers: project, then organisation, then
+   personal.** The resolver stays pure (ADR-002). It receives the union of
+   the vaults' paths, each labelled with the vault it came from, and its
+   partition names the vault a held credential is read from. `plan` says
+   which vault each missing credential belongs in, and `vault set` writes
+   there unless told otherwise.
+3. **A person's age public key is part of their profile.** `loftline login`
+   pushes it; the dashboard stores it. Public keys are public. The site
+   never sees a private key, a vault file, or a value (ADR-014).
+4. **Sharing is re-encryption, never key transfer.** Naming someone an
+   administrator on the dashboard records intent. An existing
+   administrator's next `sync` adds the newcomer's public key to the
+   vault's SOPS configuration, runs `sops updatekeys`, commits, and adds
+   them to the repository. The newcomer's own `sync` clones it. Removing
+   an administrator re-encrypts without their key and lists the
+   credentials in that vault as needing rotation: a copy of the old file
+   decrypts forever, so the values must change, not just the recipients.
+5. **Two roles per thing, explicit.** An organisation has owners and
+   members. A project has administrators and collaborators, recorded
+   rather than inferred from ownership. Administrators hold the vault and
+   run `realise`, `provision` and Terraform; collaborators are repository
+   collaborators and nothing more. An organisation's owners are
+   administrators of every project it owns.
+6. **The vault is chosen when the project is defined.** The dashboard
+   form and the CLI ask one question, with defaults that follow the
+   owner. A personal project uses the personal vault unless the person
+   asks for a project vault. An organisation's project uses the
+   organisation's vault unless an owner asks for a project vault. The
+   answer is stored on the project; a project vault can be added later,
+   and `loftline vault move <name>` carries a credential across, which is
+   a decrypt and an encrypt on the administrator's machine.
+7. **An organisation may be linked to a GitHub organisation.** GitHub's
+   API cannot create an organisation on a free account, so an owner
+   creates it on GitHub and names it on the dashboard. Once linked, the
+   organisation's vault repository and its projects' repositories are
+   created under that GitHub organisation rather than under whoever ran
+   `realise`; the Terraform module already takes an owner. Collaborators
+   stay repository collaborators, which works the same under a person or
+   an organisation, so Loftline never manages GitHub organisation
+   membership.
+
+**Consequences.**
+
+- Nothing in the split changes what the site holds: intent, public keys
+  and reports. The one new class of fact on the server, public keys, is
+  designed to be published.
+- `sync` gains a side effect on the administrator's machine, writing to
+  vault repositories, and must say so before it does it, the way `realise`
+  narrates each step.
+- The vault adapter's `list_paths`, `get` and `set` take a vault name.
+  Everything the resolver tests today keeps passing with a single vault
+  labelled `personal`.
+- Rotation after removal is reported, not automated. The credentials
+  concerned are a vendor's to reissue, and each descriptor's acquire steps
+  already say how.
+- Per-project Apple and Play accounts become one descriptor change, a
+  scope of `project` on those two credentials, once project vaults exist.
+  Billing attribution (which credential a project actually used) is the
+  next record, not this one.
