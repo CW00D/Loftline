@@ -23,14 +23,18 @@ from loftline.site import credentials_plan
 from loftline.vault import VaultIndex
 from loftline.vault_sops import SopsAgeVault
 from loftline.vaults import (
+    choose,
     copy_credentials,
     load_registry,
     org_vault_path,
+    parse_target,
     register_org_vault,
+    register_vault,
     vault_config,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+EMPTY = "loftline: {}\nsops:\n    version: 3.9.0\n"
 CREDENTIALS = REPO_ROOT / "credentials.yml"
 
 PERSONAL = """\
@@ -121,13 +125,15 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 
 def test_an_absent_registry_is_empty_and_registering_creates_it(registry: Path) -> None:
-    assert load_registry(registry) == {}
+    assert load_registry(registry) == {"org": {}, "project": {}}
 
     register_org_vault("acme", Path("some/where/vault.yml"), registry)
 
     assert registry.exists()
-    assert list(load_registry(registry)) == ["acme"]
-    assert load_registry(registry)["acme"].name == "vault.yml"
+    register_vault("project", "shop", Path("else/where/vault.yml"), registry)
+    assert list(load_registry(registry)["org"]) == ["acme"]
+    assert list(load_registry(registry)["project"]) == ["shop"]
+    assert load_registry(registry)["org"]["acme"].name == "vault.yml"
 
 
 def test_an_unregistered_organisation_says_how_to_register(registry: Path) -> None:
@@ -152,6 +158,60 @@ def test_an_organisations_project_uses_only_its_vault(
     personal: Path, acme: Path, registry: Path
 ) -> None:
     assert vault_config(None, "acme", registry=registry).vault_path == acme
+
+
+def test_a_personal_project_with_its_own_vault_uses_that(
+    personal: Path, registry: Path, tmp_path: Path
+) -> None:
+    own = make_vault(tmp_path / "shop", EMPTY)
+    register_vault("project", "shop", own, registry)
+
+    chosen = choose(None, None, "shop", registry=registry)
+    other = choose(None, None, "other", registry=registry)
+
+    assert chosen.config.vault_path == own
+    assert chosen.kind == "project" and chosen.mark == "project:shop"
+    assert other.config.vault_path == personal and other.kind == "personal"
+
+
+def test_targets_are_parsed_as_org_project_or_personal() -> None:
+    assert parse_target("acme") == ("acme", None)
+    assert parse_target("org:acme") == ("acme", None)
+    assert parse_target("project:shop") == (None, "shop")
+    assert parse_target("personal") == (None, None)
+    with pytest.raises(VaultError):
+        parse_target("project:")
+
+
+def test_vault_copy_into_a_project_vault_marks_the_source(
+    personal: Path, registry: Path, tmp_path: Path, machine: list[list[str]]
+) -> None:
+    own = make_vault(tmp_path / "shop", EMPTY)
+    register_vault("project", "shop", own, registry)
+
+    outcome = CliRunner().invoke(
+        app,
+        [
+            "vault",
+            "copy",
+            "--to",
+            "project:shop",
+            "render_api_key",
+            "--credentials",
+            str(CREDENTIALS),
+        ],
+    )
+    unregistered = CliRunner().invoke(
+        app, ["vault", "copy", "--to", "project:nope", "render_api_key"]
+    )
+
+    assert outcome.exit_code == 0, outcome.output
+    sops_set = next(c for c in machine if c[1:2] == ["set"])
+    assert sops_set[2] == str(own)
+    assert '"rotate_from": "personal"' in sops_set[4]
+    assert "--project-vault shop --replace" in outcome.output
+    assert unregistered.exit_code == 1
+    assert "--project nope" in unregistered.output
 
 
 def test_an_explicit_vault_path_wins(
@@ -294,7 +354,7 @@ def test_vault_init_with_org_registers_the_new_vault(
 
     assert outcome.exit_code == 0, outcome.output
     assert (
-        load_registry(registry)["acme"]
+        load_registry(registry)["org"]["acme"]
         == (tmp_path / "acme-vault" / "vault.yml").resolve()
     )
     assert "--org acme" in outcome.output
@@ -305,11 +365,18 @@ def test_vault_register_records_an_existing_file(
 ) -> None:
     vault = make_vault(tmp_path / "cloned", PERSONAL)
 
-    outcome = CliRunner().invoke(app, ["vault", "register", "acme", str(vault)])
+    outcome = CliRunner().invoke(
+        app, ["vault", "register", str(vault), "--org", "acme"]
+    )
+    own = CliRunner().invoke(
+        app, ["vault", "register", str(vault), "--project", "shop"]
+    )
 
     assert outcome.exit_code == 0, outcome.output
-    assert load_registry(registry)["acme"] == vault.resolve()
+    assert own.exit_code == 0, own.output
+    assert load_registry(registry)["org"]["acme"] == vault.resolve()
+    assert load_registry(registry)["project"]["shop"] == vault.resolve()
     missing = CliRunner().invoke(
-        app, ["vault", "register", "beta", str(tmp_path / "nowhere.yml")]
+        app, ["vault", "register", str(tmp_path / "nowhere.yml"), "--org", "beta"]
     )
     assert missing.exit_code == 1

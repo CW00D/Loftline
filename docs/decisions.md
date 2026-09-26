@@ -1547,18 +1547,22 @@ attributed to anyone (the work this record clears the ground for).
    names. An organisation's vault is created by an owner with
    `loftline vault init --org <slug>` and registered on that machine by
    slug in a small locations file (`~/.loftline/vaults.yml`), so that
-   `--org <slug>` on any command finds it. Per-project credentials remain
-   project-scoped *paths* inside a vault, as Stripe keys already are; a
-   separate vault per project was considered and dropped, because the
-   owner's vault is the only answer anyone gave.
-2. **A project's vault is its owner's, and only its owner's.** An
+   `--org <slug>` on any command finds it. A personal project may also
+   have a vault of its own, made with `vault init --project <name>` and
+   registered the same way, found by the project's name whenever a spec
+   names it. Per-project credentials otherwise remain project-scoped
+   *paths* inside a shared vault, as Stripe keys already are.
+2. **A project's vault is its owner's unless it was given its own.** An
    organisation's project reads and writes the organisation's vault and
-   nothing else; a personal project uses the personal vault. There is no
-   fallback between them, so there is no question to ask when a project is
-   defined. The resolver stays pure (ADR-002); it is simply handed the
-   index of the one vault that applies. The dashboard token is the
-   person's, so `sync` and `realise` read it from the personal vault
-   whatever the project.
+   nothing else, always. A personal project uses the personal vault by
+   default, or its own if one was chosen. There is no fallback between
+   vaults. The one question is asked when the project is defined, on the
+   dashboard form and answered by the `vault` field ("owner" or
+   "project"); `realise` refuses when the dashboard says "project" and
+   the machine has no such vault registered. The resolver stays pure
+   (ADR-002); it is simply handed the index of the one vault that
+   applies. The dashboard token is the person's, so `sync` and `realise`
+   read it from the personal vault whatever the project.
 3. **A person's age public key is part of their profile.** `loftline login`
    pushes it; the dashboard stores it. Public keys are public. The site
    never sees a private key, a vault file, or a value (ADR-014).
@@ -1581,12 +1585,14 @@ attributed to anyone (the work this record clears the ground for).
    into a new organisation founded on it (a company built round a
    project). The organisation's owners become its administrators, its
    collaborators who have signed in join the organisation as members, and
-   from then on its credentials come from the organisation's vault. The
+   from then on its credentials come from the organisation's vault; a
+   vault of its own, if it had one, is retired by the move. The
    dashboard records the move; the carrying happens on the machine.
    Either the credentials are stored afresh, or `loftline vault copy
-   --to <slug> --spec loftline.yml` decrypts each held value from the
-   personal vault and stores it in the organisation's, marked
-   `rotate_from: personal` in the file's plaintext keys. `plan`,
+   --to <slug> [--from project:<name>] --spec loftline.yml` decrypts each
+   held value from the old vault and stores it in the organisation's,
+   marked `rotate_from: <where it came from>` in the file's plaintext
+   keys. `plan`,
    `vault list` and the dashboard show the mark until a fresh value
    replaces it with `vault set --replace`, because a value two vaults
    hold should become one the organisation holds alone.

@@ -39,7 +39,7 @@ from .resolve import resolve
 from .secrets import GitHubSink, write_secrets
 from .site import DEFAULT_SITE, SiteClient, sync_project
 from .vault_sops import SopsAgeVault
-from .vaults import vault_config
+from .vaults import choose
 
 CREDENTIALS_FILE = credentials_file()
 
@@ -109,9 +109,10 @@ def _parse_spec(spec: str) -> Spec:
         raise SpecError(f"the spec is not valid:\n{exc}") from exc
 
 
-def _config(org: str | None = None) -> VaultConfig:
-    """The vault for a project: an organisation's if `org` is given (ADR-035)."""
-    return vault_config(None, org)
+def _config(org: str | None = None, project: str | None = None) -> VaultConfig:
+    """The vault for a project (ADR-035): the organisation's if `org` is given,
+    the project's own if one is registered here, else the personal one."""
+    return choose(None, org, project).config
 
 
 def _vault(config: VaultConfig) -> SopsAgeVault:
@@ -196,9 +197,9 @@ def vault_list(org: str | None = None) -> list[str]:
 )
 @anticipated
 def plan(spec: str, org: str | None = None) -> str:
-    config = _config(org)
-    require(config, Capability.READ_INDEX)
     project = _parse_spec(spec)
+    config = _config(org, project.project_name)
+    require(config, Capability.READ_INDEX)
     descriptors = load_descriptors(CREDENTIALS_FILE)
     index = _vault(config).index()
     resolution = resolve(project, descriptors, index)
@@ -218,9 +219,9 @@ def plan(spec: str, org: str | None = None) -> str:
 def new(
     spec: str, destination: str, force: bool = False, org: str | None = None
 ) -> str:
-    config = _config(org)
-    require(config, Capability.READ_INDEX)
     project = _parse_spec(spec)
+    config = _config(org, project.project_name)
+    require(config, Capability.READ_INDEX)
     descriptors = load_descriptors(CREDENTIALS_FILE)
     resolution = resolve(project, descriptors, _vault(config).index())
     target = generate(project, Path(destination), overwrite=force)
@@ -260,11 +261,11 @@ def secrets_write(
     rotate: bool = False,
     org: str | None = None,
 ) -> str:
-    config = _config(org)
+    project = _parse_spec(spec)
+    config = _config(org, project.project_name)
     require(config, Capability.DECRYPT)
     sink = GitHubSink(repo)
     sink.preflight()
-    project = _parse_spec(spec)
     descriptors = load_descriptors(CREDENTIALS_FILE)
     store = _vault(config)
     resolution = resolve(project, descriptors, store.index())
@@ -302,11 +303,12 @@ def sync(
     descriptor = descriptors["loftline_site_token"]
     assert descriptor.vault_path is not None
     client = SiteClient(_vault(personal).get(descriptor.vault_path), site=DEFAULT_SITE)
-    config = _config(org)
+    project = _parse_spec(spec)
+    chosen = choose(None, org, project.project_name)
+    config = chosen.config
     require(config, Capability.DECRYPT)
     store = _vault(config)
     index = store.index()
-    project = _parse_spec(spec)
     report = sync_project(
         project,
         client,
@@ -315,6 +317,7 @@ def sync(
         org_slug=org,
         resolution=resolve(project, descriptors, index),
         index=index,
+        vault_kind=chosen.kind,
     )
     lines = [f"Synced {report.project}"]
     lines += [

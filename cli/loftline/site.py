@@ -341,6 +341,7 @@ def sync_project(
     org_slug: str | None = None,
     resolution: Resolution | None = None,
     index: VaultIndex | None = None,
+    vault_kind: str | None = None,
     health: Callable[[str], bool] = http_health,
     on_github: Callable[[str], set[str]] = github_collaborators,
 ) -> SyncReport:
@@ -349,7 +350,9 @@ def sync_project(
     status = live_status(spec, health=health)
     if resolution is not None:
         status["credentials"] = credentials_plan(resolution, index)
-    status["vault"] = "organisation" if org_slug else "personal"
+    # Which vault this machine actually drew on, so the dashboard can show a
+    # mismatch with what was chosen when the project was defined.
+    status["vault"] = vault_kind or ("organisation" if org_slug else "personal")
     summary = project_summary(project_dir)
     if summary:
         status["summary"] = summary

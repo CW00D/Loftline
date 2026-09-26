@@ -39,10 +39,11 @@ from .site import DEFAULT_SITE, SiteClient, sync_project
 from .urlhandler import open_terminal, parse, register
 from .vault_sops import SopsAgeVault
 from .vaults import (
+    choose,
     copy_credentials,
-    register_org_vault,
-    vault_config,
-    vault_label,
+    parse_target,
+    register_vault,
+    require_project_vault,
 )
 
 app = typer.Typer(
@@ -75,6 +76,15 @@ OrgOption = Annotated[
         "--org",
         help="Dashboard organisation slug. Its project uses the organisation's "
         "vault, registered on this machine, instead of your personal one.",
+        show_default=False,
+    ),
+]
+ProjectVaultOption = Annotated[
+    str | None,
+    typer.Option(
+        "--project-vault",
+        help="A personal project's name, to use the vault of its own registered "
+        "on this machine instead of your personal one.",
         show_default=False,
     ),
 ]
@@ -120,10 +130,15 @@ def doctor(vault: VaultOption = None) -> None:
 
 
 @vault_app.command("list")
-def vault_list(vault: VaultOption = None, org: OrgOption = None) -> None:
+def vault_list(
+    vault: VaultOption = None,
+    org: OrgOption = None,
+    project_vault: ProjectVaultOption = None,
+) -> None:
     """Print the paths held in the vault. Values are never read."""
     try:
-        config = vault_config(vault, org)
+        chosen = choose(vault, org, project_vault)
+        config = chosen.config
     except LoftlineError as exc:
         _fail(str(exc))
     try:
@@ -140,7 +155,7 @@ def vault_list(vault: VaultOption = None, org: OrgOption = None) -> None:
             f"{path}  (copied from {copied_from}; reissue)" if copied_from else path
         )
     typer.echo(
-        f"\n{len(paths)} path(s) in {config.vault_path} ({vault_label(org)}). "
+        f"\n{len(paths)} path(s) in {config.vault_path} ({chosen.label}). "
         "No value was decrypted."
     )
 
@@ -163,27 +178,47 @@ def vault_init(
             show_default=False,
         ),
     ] = None,
+    project: Annotated[
+        str | None,
+        typer.Option(
+            "--project",
+            help="Make this a personal project's own vault and register it by name.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
     """Create an encrypted, empty vault and initialise git in it.
 
     Writes the SOPS configuration, an empty vault encrypted to the given
     recipients, and a .gitignore that keeps key material out. With --org the
-    vault is an organisation's, and this machine remembers it by slug so
-    `--org <slug>` on every other command finds it.
+    vault is an organisation's, found by `--org <slug>` on every other
+    command; with --project it is one personal project's own, found by that
+    project's name whenever a spec names it.
     """
+    if org and project:
+        _fail("A vault is an organisation's or a project's, not both.")
     try:
         vault = init_vault(directory, recipient)
         if org:
-            registry = register_org_vault(org, vault)
+            registry = register_vault("org", org, vault)
+        elif project:
+            registry = register_vault("project", project, vault)
     except LoftlineError as exc:
         _fail(str(exc))
 
     typer.echo(f"Created {vault}, encrypted to {len(recipient)} recipients.")
     if org:
-        typer.echo(f"Registered as the vault for {org} in {registry}.")
+        typer.echo(f"Registered as the vault for the organisation {org} in {registry}.")
+    elif project:
+        typer.echo(f"Registered as the vault for the project {project} in {registry}.")
     typer.echo("Next:")
     if org:
         typer.echo(f"  use --org {org} on plan, sync, realise and vault set")
+    elif project:
+        typer.echo(
+            f"  commands given a spec for {project} use it; vault set takes "
+            f"--project-vault {project}"
+        )
     else:
         typer.echo(f"  set LOFTLINE_VAULT={vault.resolve()} permanently")
     typer.echo(
@@ -194,23 +229,37 @@ def vault_init(
 
 @vault_app.command("register")
 def vault_register(
-    org: Annotated[str, typer.Argument(help="The organisation's dashboard slug.")],
     vault: Annotated[
-        Path, typer.Argument(help="Its vault.yml, cloned from the vault repository.")
+        Path, typer.Argument(help="A vault.yml, cloned from its vault repository.")
     ],
+    org: Annotated[
+        str | None,
+        typer.Option(
+            "--org", help="The organisation it belongs to.", show_default=False
+        ),
+    ] = None,
+    project: Annotated[
+        str | None,
+        typer.Option(
+            "--project", help="The project it belongs to.", show_default=False
+        ),
+    ] = None,
 ) -> None:
-    """Tell this machine where an organisation's existing vault is.
+    """Tell this machine where an existing organisation or project vault is.
 
-    For a second administrator who has cloned the organisation's vault
-    repository. Records a location, nothing more.
+    For a second administrator who has cloned the vault repository, or a
+    second machine. Records a location, nothing more.
     """
+    if bool(org) == bool(project):
+        _fail("Say whose vault it is: --org <slug> or --project <name>.")
     if not vault.is_file():
         _fail(f"{vault} is not a file. Clone the vault repository first.")
+    kind, name = ("org", org) if org else ("project", project)
     try:
-        registry = register_org_vault(org, vault)
+        registry = register_vault(kind, str(name), vault)
     except LoftlineError as exc:
         _fail(str(exc))
-    typer.echo(f"Registered {vault.resolve()} as the vault for {org} in {registry}.")
+    typer.echo(f"Registered {vault.resolve()} as the vault for {name} in {registry}.")
 
 
 @vault_app.command("copy")
@@ -218,7 +267,9 @@ def vault_copy(
     to: Annotated[
         str,
         typer.Option(
-            "--to", help="Slug of the organisation whose vault receives them."
+            "--to",
+            help="The receiving vault: an organisation's slug, project:<name> for a "
+            "project's own vault, or personal.",
         ),
     ],
     names: Annotated[
@@ -234,12 +285,13 @@ def vault_copy(
             help="A loftline.yml: copy every credential it needs that is held.",
         ),
     ] = None,
-    source_org: Annotated[
-        str | None,
+    source: Annotated[
+        str,
         typer.Option(
-            "--from", help="Copy from this organisation's vault instead of your own."
+            "--from",
+            help="The vault to copy from, in the same forms. Default: personal.",
         ),
-    ] = None,
+    ] = "personal",
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     replace: Annotated[
         bool,
@@ -248,64 +300,78 @@ def vault_copy(
         ),
     ] = False,
 ) -> None:
-    """Copy credentials into an organisation's vault, marked for rotation.
+    """Copy credentials from one vault into another, marked for rotation.
 
-    For a project that has moved into an organisation. Each value is decrypted
-    from the source vault and stored straight into the target; nothing is
-    printed. Every copy is marked as copied, and the plan and the dashboard
-    say so until a fresh value replaces it with `vault set --replace`: a
-    credential two vaults hold should become one the organisation holds alone.
+    For a project that has moved, or been given a vault of its own. Each value
+    is decrypted from the source vault and stored straight into the target;
+    nothing is printed. Every copy is marked as copied, and the plan and the
+    dashboard say so until a fresh value replaces it with `vault set
+    --replace`: a credential two vaults hold should become one vault's alone.
     """
     if not names and spec is None:
         _fail("Name the credentials to copy, or pass --spec to copy what a spec holds.")
-    if source_org == to:
-        _fail("--from and --to name the same organisation.")
+    if source == to:
+        _fail("--from and --to name the same vault.")
     try:
-        source_config = vault_config(None, source_org)
-        target_config = vault_config(None, to)
+        from_org, from_project = parse_target(source)
+        to_org, to_project = parse_target(to)
+        if to_project and require_project_vault(to_project) is None:
+            pass  # unreachable; require_project_vault raises when unregistered
+        source_choice = choose(None, from_org, from_project)
+        target_choice = choose(None, to_org, to_project)
+        if to_project and target_choice.kind != "project":
+            require_project_vault(to_project)
+        if from_project and source_choice.kind != "project":
+            require_project_vault(from_project)
+        source_config, target_config = source_choice.config, target_choice.config
         require(source_config, Capability.DECRYPT)
         require(target_config, Capability.WRITE)
         assert source_config.vault_path is not None
         assert target_config.vault_path is not None
         descriptors = load_descriptors(credentials)
-        source = SopsAgeVault(source_config.vault_path)
+        source_store = SopsAgeVault(source_config.vault_path)
         target = SopsAgeVault(target_config.vault_path)
-        held = set(source.list_paths())
+        held = set(source_store.list_paths())
 
         paths: list[str] = []
         if spec is not None:
-            resolution = resolve(load_spec(spec), descriptors, source.index())
+            resolution = resolve(load_spec(spec), descriptors, source_store.index())
             paths += [entry.vault_path for entry in resolution.inject]
         for name in names or []:
             descriptor = descriptors.get(name)
             if descriptor is None or descriptor.vault_path is None:
                 _fail(f"{name} is not a credential that lives in a vault.")
             if descriptor.vault_path not in held:
-                _fail(f"{name} is not in {vault_label(source_org)}; nothing to copy.")
+                _fail(f"{name} is not in {source_choice.label}; nothing to copy.")
             paths.append(descriptor.vault_path)
         if not paths:
-            _fail(f"Nothing to copy: {vault_label(source_org)} holds none of these.")
+            _fail(f"Nothing to copy: {source_choice.label} holds none of these.")
 
         copied = copy_credentials(
-            source,
+            source_store,
             target,
             dict.fromkeys(paths),
-            mark_from=source_org or "personal",
+            mark_from=source_choice.mark,
             replace=replace,
         )
     except LoftlineError as exc:
         _fail(str(exc))
 
-    typer.echo(f"Copied {len(copied)} credential(s) into {vault_label(to)}:")
+    flag = (
+        f" --org {to_org}"
+        if to_org
+        else (f" --project-vault {to_project}" if to_project else "")
+    )
+    typer.echo(f"Copied {len(copied)} credential(s) into {target_choice.label}:")
     for path in copied:
         typer.echo(f"  {path}")
     typer.echo(
         "Each is marked as copied. Reissue it with the vendor and store the new value "
-        f"with `loftline vault set <name> --org {to} --replace`; the mark clears."
+        f"with `loftline vault set <name>{flag} --replace`; the mark clears."
     )
     typer.echo(
-        f"{target_config.vault_path.name} has changed. Commit and push the "
-        "organisation's vault repository."
+        f"{target_config.vault_path.name} has changed. Commit and push its "
+        "vault repository."
     )
 
 
@@ -316,6 +382,7 @@ def vault_set(
     ],
     vault: VaultOption = None,
     org: OrgOption = None,
+    project_vault: ProjectVaultOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
     replace: Annotated[
         bool,
@@ -337,7 +404,10 @@ def vault_set(
     is never echoed back.
     """
     try:
-        config = vault_config(vault, org)
+        if project_vault:
+            require_project_vault(project_vault)
+        chosen = choose(vault, org, project_vault)
+        config = chosen.config
         require(config, Capability.WRITE)
         assert config.vault_path is not None
         descriptors = load_descriptors(credentials)
@@ -368,7 +438,7 @@ def vault_set(
     except LoftlineError as exc:
         _fail(str(exc))
 
-    typer.echo(f"Stored {name} at {descriptor.vault_path} in {vault_label(org)}.")
+    typer.echo(f"Stored {name} at {descriptor.vault_path} in {chosen.label}.")
     typer.echo(
         f"{config.vault_path.name} has changed. Commit and push the vault repository "
         "so the value survives this machine."
@@ -407,10 +477,10 @@ def plan(
     and no `sops` binary. It performs no side effects whatever.
     """
     try:
-        config = vault_config(vault, org)
+        project = load_spec(spec)
+        config = choose(vault, org, project.project_name).config
         require(config, Capability.READ_INDEX)
         assert config.vault_path is not None
-        project = load_spec(spec)
         descriptors = load_descriptors(credentials)
         index = SopsAgeVault(config.vault_path).index()
         resolution = resolve(project, descriptors, index)
@@ -442,10 +512,10 @@ def new(
     is provisioned and no credential value is read.
     """
     try:
-        config = vault_config(vault, org)
+        project = load_spec(spec)
+        config = choose(vault, org, project.project_name).config
         require(config, Capability.READ_INDEX)
         assert config.vault_path is not None
-        project = load_spec(spec)
         descriptors = load_descriptors(credentials)
         index = SopsAgeVault(config.vault_path).index()
         resolution = resolve(project, descriptors, index)
@@ -494,12 +564,12 @@ def secrets_write(
     later runs. Nothing is printed but names and places.
     """
     try:
-        config = vault_config(vault, org)
+        project = load_spec(spec)
+        config = choose(vault, org, project.project_name).config
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         sink = GitHubSink(repo)
         sink.preflight()
-        project = load_spec(spec)
         descriptors = load_descriptors(credentials)
         store = SopsAgeVault(config.vault_path)
         resolution = resolve(project, descriptors, store.index())
@@ -562,12 +632,12 @@ def provision_command(
     Aura API key and the Render API key are read from the vault.
     """
     try:
-        config = vault_config(vault, org)
+        project = load_spec(spec)
+        config = choose(vault, org, project.project_name).config
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         github = GitHubSink(repo)
         github.preflight()
-        project = load_spec(spec)
         descriptors = load_descriptors(credentials)
         store = SopsAgeVault(config.vault_path)
         resolution = resolve(project, descriptors, store.index())
@@ -750,12 +820,13 @@ def sync(
     """
     try:
         client = _site_client(credentials, site)
-        config = vault_config(vault, org)
+        project_spec = load_spec(spec)
+        chosen = choose(vault, org, project_spec.project_name)
+        config = chosen.config
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         store = SopsAgeVault(config.vault_path)
         index = store.index()
-        project_spec = load_spec(spec)
         resolution = resolve(project_spec, load_descriptors(credentials), index)
         report = sync_project(
             project_spec,
@@ -765,12 +836,13 @@ def sync(
             org_slug=org,
             resolution=resolution,
             index=index,
+            vault_kind=chosen.kind,
         )
     except LoftlineError as exc:
         _fail(str(exc))
     except KeyError:
         _fail("credentials.yml has no loftline_site_token descriptor.")
-    typer.echo(f"Synced {report.project} with {site} ({vault_label(org)})")
+    typer.echo(f"Synced {report.project} with {site} ({chosen.label})")
     for name, healthy in report.environments:
         typer.echo(f"  {name:11} {'healthy' if healthy else 'UNHEALTHY'}")
     if report.wanted:
@@ -807,23 +879,32 @@ def realise(
     """
     try:
         client = _site_client(credentials, site)
-        config = vault_config(vault, org)
+        pulled = client.pull_project(name, org_slug=org)
+        if not pulled.get("spec"):
+            _fail(f"{name} has no spec on the dashboard; define it there first.")
+        if pulled.get("vault") == "project" and not org:
+            # The dashboard says this project has a vault of its own; the
+            # machine must have it, or credentials would land in the wrong one.
+            require_project_vault(name)
+        chosen = choose(vault, org, name)
+        config = chosen.config
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         descriptors = load_descriptors(credentials)
         store = SopsAgeVault(config.vault_path)
-        pulled = client.pull_project(name, org_slug=org)
-        if not pulled.get("spec"):
-            _fail(f"{name} has no spec on the dashboard; define it there first.")
         project_spec = spec_from_dashboard(dict(pulled["spec"]))
         resolution = resolve(project_spec, descriptors, store.index())
         if resolution.request:
             names = ", ".join(r.name for r in resolution.request)
-            org_flag = f" --org {org}" if org else ""
+            flag = (
+                f" --org {org}"
+                if org
+                else (f" --project-vault {name}" if chosen.kind == "project" else "")
+            )
             _fail(
-                f"{name} still needs {names} in {vault_label(org)}. The dashboard's "
+                f"{name} still needs {names} in {chosen.label}. The dashboard's "
                 "project page lists how to get each; store them with "
-                f"`loftline vault set <name>{org_flag}` and re-run."
+                f"`loftline vault set <name>{flag}` and re-run."
             )
 
         def do_generate(s: Spec, directory: Path) -> Path:
@@ -851,6 +932,7 @@ def realise(
             org_slug=org,
             resolution=resolution,
             index=store.index(),
+            vault_kind=chosen.kind,
         )
     except (LoftlineError, RealiseError) as exc:
         _fail(str(exc))
