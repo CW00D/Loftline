@@ -18,11 +18,18 @@ from typing import Annotated, NoReturn
 
 import typer
 
+from .adopt import (
+    AdoptError,
+    adopt,
+    load_project,
+    project_descriptors,
+    resolve_project,
+)
 from .bootstrap import init_vault, mcp_config
 from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
 from .generate import generate
-from .models import Spec, load_descriptors, load_spec
+from .models import DescriptorSet, Spec, load_descriptors, load_spec
 from .paths import credentials_file
 from .providers.aura import AuraClient
 from .providers.cloudflare import CloudflareClient
@@ -97,6 +104,13 @@ CredentialsOption = Annotated[
     ),
 ]
 DEFAULT_CREDENTIALS = credentials_file()
+
+
+def _descriptors(credentials: Path, project_dir: Path | None) -> DescriptorSet:
+    """Loftline's descriptors, plus the project's own file if it has one
+    (adopted projects, ADR-036)."""
+    return project_descriptors(load_descriptors(credentials), project_dir)
+
 
 _SYMBOL = {Status.PASS: "ok  ", Status.FAIL: "FAIL", Status.UNKNOWN: "?   "}
 
@@ -410,7 +424,7 @@ def vault_set(
         config = chosen.config
         require(config, Capability.WRITE)
         assert config.vault_path is not None
-        descriptors = load_descriptors(credentials)
+        descriptors = _descriptors(credentials, Path.cwd())
 
         descriptor = descriptors.get(name)
         if descriptor is None:
@@ -477,13 +491,13 @@ def plan(
     and no `sops` binary. It performs no side effects whatever.
     """
     try:
-        project = load_spec(spec)
+        project = load_project(spec)
         config = choose(vault, org, project.project_name).config
         require(config, Capability.READ_INDEX)
         assert config.vault_path is not None
-        descriptors = load_descriptors(credentials)
+        descriptors = _descriptors(credentials, spec.parent)
         index = SopsAgeVault(config.vault_path).index()
-        resolution = resolve(project, descriptors, index)
+        resolution = resolve_project(project, descriptors, index)
     except LoftlineError as exc:
         _fail(str(exc))
 
@@ -564,15 +578,15 @@ def secrets_write(
     later runs. Nothing is printed but names and places.
     """
     try:
-        project = load_spec(spec)
+        project = load_project(spec)
         config = choose(vault, org, project.project_name).config
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         sink = GitHubSink(repo)
         sink.preflight()
-        descriptors = load_descriptors(credentials)
+        descriptors = _descriptors(credentials, spec.parent)
         store = SopsAgeVault(config.vault_path)
-        resolution = resolve(project, descriptors, store.index())
+        resolution = resolve_project(project, descriptors, store.index())
         report = write_secrets(resolution, store, sink, partial=partial, rotate=rotate)
     except LoftlineError as exc:
         _fail(str(exc))
@@ -779,6 +793,90 @@ def login(
     )
 
 
+@app.command("adopt")
+def adopt_command(
+    directory: Annotated[Path, typer.Argument(help="The existing project's checkout.")],
+    repo: Annotated[
+        str, typer.Option("--repo", help="Its GitHub repository as OWNER/NAME.")
+    ],
+    name: Annotated[
+        str | None,
+        typer.Option(
+            "--name",
+            help="The project's name on the dashboard. Default: the repository's.",
+            show_default=False,
+        ),
+    ] = None,
+    health: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--health",
+            help="ENV=URL: a URL whose 200 means that environment is up. Repeatable.",
+            show_default=False,
+        ),
+    ] = None,
+    credentials: CredentialsOption = DEFAULT_CREDENTIALS,
+) -> None:
+    """Put a project that already exists on the dashboard (ADR-036).
+
+    Reads the repository's environments and the names of its secrets through
+    `gh`, plus what render.yaml and .env.example declare, and writes
+    loftline.yml and, for names Loftline has no descriptor for,
+    loftline.credentials.yml. Nothing is generated and nothing is changed on
+    GitHub or the host. Values are never read: GitHub does not return them.
+    """
+    checks: dict[str, str] = {}
+    for item in health or []:
+        if "=" not in item:
+            _fail(f"--health takes ENV=URL, not {item!r}")
+        environment, url = item.split("=", 1)
+        checks[environment.strip()] = url.strip()
+    try:
+        report = adopt(
+            directory,
+            repo,
+            name=name,
+            health=checks,
+            descriptors=load_descriptors(credentials),
+        )
+    except (LoftlineError, AdoptError) as exc:
+        _fail(str(exc))
+
+    a = report.adoption
+    typer.echo(f"Adopted {a.project_name} from {a.repository}")
+    typer.echo(f"  environments  {', '.join(a.environments)}")
+    typer.echo(
+        f"  credentials   {len(a.credentials)} set by the repository: "
+        f"{len(report.known)} Loftline already describes, "
+        f"{len(report.new)} described in {report.credentials_file.name}"
+        if report.credentials_file
+        else f"  credentials   {len(a.credentials)} set by the repository, "
+        "all of which Loftline already describes"
+    )
+    for secret in report.known:
+        typer.echo(f"    {secret:32} known   ({', '.join(report.sources[secret])})")
+    for secret in report.new:
+        typer.echo(f"    {secret:32} new     ({', '.join(report.sources[secret])})")
+    for note in report.notes:
+        typer.echo(f"  note: {note}")
+    typer.echo(f"  wrote {report.project_file}")
+    if report.credentials_file:
+        typer.echo(f"  wrote {report.credentials_file}; fill in vendor and acquire")
+    typer.echo("Next:")
+    typer.echo(
+        f"  loftline plan {report.project_file}    to see what the vault holds already"
+    )
+    typer.echo(
+        f"  loftline sync {report.project_file} --repo {a.repository} --project "
+        f"{directory}"
+    )
+    typer.echo(
+        "  store what is missing with `loftline vault set <name>` from this "
+        "directory; when nothing is, `loftline secrets write` takes over the "
+        "GitHub environments. Until then the project runs exactly as it does now."
+    )
+
+
 def _site_client(credentials: Path, site: str) -> SiteClient:
     """The dashboard, signed in with the token in your personal vault."""
     personal = VaultConfig.from_env()
@@ -820,14 +918,15 @@ def sync(
     """
     try:
         client = _site_client(credentials, site)
-        project_spec = load_spec(spec)
+        project_spec = load_project(spec)
         chosen = choose(vault, org, project_spec.project_name)
         config = chosen.config
         require(config, Capability.DECRYPT)
         assert config.vault_path is not None
         store = SopsAgeVault(config.vault_path)
         index = store.index()
-        resolution = resolve(project_spec, load_descriptors(credentials), index)
+        descriptors = _descriptors(credentials, project or spec.parent)
+        resolution = resolve_project(project_spec, descriptors, index)
         report = sync_project(
             project_spec,
             client,
@@ -844,7 +943,12 @@ def sync(
         _fail("credentials.yml has no loftline_site_token descriptor.")
     typer.echo(f"Synced {report.project} with {site} ({chosen.label})")
     for name, healthy in report.environments:
-        typer.echo(f"  {name:11} {'healthy' if healthy else 'UNHEALTHY'}")
+        state = (
+            "not checked"
+            if name in report.unchecked
+            else ("healthy" if healthy else "UNHEALTHY")
+        )
+        typer.echo(f"  {name:11} {state}")
     if report.wanted:
         typer.echo(f"  collaborators wanted   {', '.join(report.wanted)}")
         typer.echo(f"  on the repository      {', '.join(report.applied) or 'none'}")
@@ -882,6 +986,11 @@ def realise(
         pulled = client.pull_project(name, org_slug=org)
         if not pulled.get("spec"):
             _fail(f"{name} has no spec on the dashboard; define it there first.")
+        if pulled["spec"].get("adopted"):
+            _fail(
+                f"{name} is an adopted project; there is nothing to realise. "
+                "Its hosting is already in place."
+            )
         if pulled.get("vault") == "project" and not org:
             # The dashboard says this project has a vault of its own; the
             # machine must have it, or credentials would land in the wrong one.

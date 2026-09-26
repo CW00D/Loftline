@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from .adopt import Adoption, adoption_summary
 from .errors import LoftlineError
 from .models import Spec
 from .providers import Transport, decode, urllib_transport
@@ -204,8 +205,10 @@ def project_summary(project_dir: Path | None) -> str | None:
     return path.read_text(encoding="utf-8")[:4000]
 
 
-def spec_summary(spec: Spec) -> dict[str, Any]:
+def spec_summary(spec: Spec | Adoption) -> dict[str, Any]:
     """The spec as the dashboard shows it. Names and choices only."""
+    if isinstance(spec, Adoption):
+        return adoption_summary(spec)
     return {
         "database": spec.database,
         "mobile": spec.mobile,
@@ -222,8 +225,11 @@ def spec_summary(spec: Spec) -> dict[str, Any]:
     }
 
 
-def environment_urls(spec: Spec, environment: str) -> dict[str, str | None]:
-    """Where each component answers, by domain if there is one, else on Render."""
+def environment_urls(spec: Spec | Adoption, environment: str) -> dict[str, str | None]:
+    """Where each component answers, by domain if there is one, else on Render.
+    An adopted project answers only where its health URL says."""
+    if isinstance(spec, Adoption):
+        return {"api_url": spec.health.get(environment), "web_url": None}
     names = hostnames(spec, environment)
     api = (
         f"https://{names['api']}"
@@ -252,21 +258,37 @@ def http_health(url: str) -> bool:
         return False
 
 
+def http_ok(url: str) -> bool:
+    """Up means answering 200. For adopted projects, which have no /health
+    contract of ours."""
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return bool(response.status == 200)
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 def live_status(
-    spec: Spec,
+    spec: Spec | Adoption,
     *,
     health: Callable[[str], bool] = http_health,
+    plain: Callable[[str], bool] = http_ok,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     checked = (now or datetime.now(UTC)).isoformat()
     environments = []
     for environment in spec.environments:
         urls = environment_urls(spec, environment)
+        if isinstance(spec, Adoption):
+            url = urls["api_url"]
+            healthy: bool | None = plain(url) if url else None
+        else:
+            healthy = health(f"{urls['api_url']}/health")
         environments.append(
             {
                 "name": environment,
                 **urls,
-                "healthy": health(f"{urls['api_url']}/health"),
+                "healthy": healthy,
                 "checked_at": checked,
             }
         )
@@ -325,6 +347,8 @@ class SyncReport:
     project: str
     repository: str | None
     environments: tuple[tuple[str, bool], ...]
+    # Environments with no health URL to ask (adopted projects).
+    unchecked: tuple[str, ...] = ()
     wanted: tuple[str, ...] = ()
     applied: tuple[str, ...] = ()
     pending: tuple[str, ...] = ()
@@ -333,7 +357,7 @@ class SyncReport:
 
 
 def sync_project(
-    spec: Spec,
+    spec: Spec | Adoption,
     site: SiteLike,
     *,
     repository: str | None,
@@ -369,6 +393,8 @@ def sync_project(
         for c in pulled.get("collaborators", [])
     }
     repo = repository or pulled.get("repository")
+    if isinstance(spec, Adoption):
+        repo = repo or spec.repository
 
     tfvars: Path | None = None
     notes: list[str] = []
@@ -396,6 +422,9 @@ def sync_project(
         repository=repo,
         environments=tuple(
             (e["name"], bool(e["healthy"])) for e in status["environments"]
+        ),
+        unchecked=tuple(
+            e["name"] for e in status["environments"] if e["healthy"] is None
         ),
         wanted=tuple(sorted(wanted)),
         applied=tuple(applied),

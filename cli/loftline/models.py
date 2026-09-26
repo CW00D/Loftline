@@ -219,8 +219,18 @@ def _read_yaml(path: Path, error: type[SpecError | DescriptorError]) -> Any:  # 
 
 
 def load_spec(path: Path) -> Spec:
-    """Load and validate a project spec."""
+    """Load and validate a generated project's `loftline.yml`."""
     data = _read_yaml(path, SpecError)
+    if isinstance(data, dict) and data.get("adopted") is True:
+        raise SpecError(
+            f"{path} describes an adopted project (ADR-036). It can be planned, "
+            "synced and have its secrets written, but not generated, realised or "
+            "provisioned: its hosting is already someone's."
+        )
+    return _spec_from(data, path)
+
+
+def _spec_from(data: Any, path: Path) -> Spec:  # noqa: ANN401 - parsed YAML
     if not isinstance(data, dict):
         raise SpecError(f"{path} must contain a mapping of spec fields")
     try:

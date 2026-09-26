@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from .adopt import Adoption
 from .models import Spec
 from .resolve import Resolution
 from .vault import VaultIndex
@@ -17,7 +18,7 @@ INDENT = "  "
 
 
 def render_plan(
-    spec: Spec,
+    spec: Spec | Adoption,
     resolution: Resolution,
     vault_path: Path,
     spec_path: Path,
@@ -38,16 +39,23 @@ def render_plan(
 
 
 def _summary(
-    spec: Spec,
+    spec: Spec | Adoption,
     vault_path: Path,
     spec_path: Path,
     path_count: int,
     resolution: Resolution,
 ) -> list[str]:
+    what = (
+        [f"{INDENT}adopted from  {spec.repository}"]
+        if isinstance(spec, Adoption)
+        else [
+            f"{INDENT}package       {spec.package_name}",
+            f"{INDENT}database      {spec.database}",
+        ]
+    )
     return [
         f"{INDENT}spec          {spec_path}",
-        f"{INDENT}package       {spec.package_name}",
-        f"{INDENT}database      {spec.database}",
+        *what,
         f"{INDENT}environments  {', '.join(spec.environments)}",
         f"{INDENT}features      {', '.join(resolution.features) or 'none'}",
         f"{INDENT}vault         {vault_path}",

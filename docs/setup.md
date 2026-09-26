@@ -198,6 +198,29 @@ terminal already running `loftline vault set <name>`; otherwise copy the
 command. Either way the value is pasted into the terminal and never into the
 page.
 
+### Adopting a project that already exists
+
+A project that predates Loftline can be tracked without being regenerated.
+From its checkout, signed in to GitHub with `gh`:
+
+```
+loftline adopt . --repo OWNER/NAME --health production=https://example.org/
+```
+
+It reads the repository's environments and the names of their secrets
+(GitHub never returns a value), what `render.yaml` marks as set by hand, and
+the keys of `.env.example`. Names Loftline already describes, such as
+`SMTP_PASSWORD`, are matched to its descriptors; the rest get one each in
+`loftline.credentials.yml` beside `loftline.yml`, for you to fill in vendor
+and acquire steps. Then `loftline plan loftline.yml` shows what the vault
+holds already, `loftline sync loftline.yml --repo OWNER/NAME --project .`
+puts it on the dashboard, and `loftline vault set <name>` from the checkout
+stores each missing value.
+
+Nothing changes on GitHub or the host until every credential is in the
+vault and you run `loftline secrets write`; from then on the vault is the
+source. `new`, `realise` and `provision` refuse an adopted project.
+
 ### Organisation vaults
 
 A project's credentials live in its owner's vault: yours for a personal

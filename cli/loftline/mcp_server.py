@@ -28,6 +28,7 @@ import yaml
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from .adopt import Adoption, adopt, is_adoption, resolve_project
 from .doctor import Capability, VaultConfig, require, run_checks
 from .errors import LoftlineError, SpecError
 from .features import load_default_features
@@ -107,6 +108,17 @@ def _parse_spec(spec: str) -> Spec:
         return Spec.model_validate(data)
     except ValueError as exc:
         raise SpecError(f"the spec is not valid:\n{exc}") from exc
+
+
+def _parse_project(spec: str) -> Spec | Adoption:
+    """A spec or an adoption, from YAML text."""
+    try:
+        data = yaml.safe_load(spec)
+    except yaml.YAMLError as exc:
+        raise SpecError(f"the spec is not valid YAML: {exc}") from exc
+    if is_adoption(data):
+        return Adoption.model_validate(data)
+    return _parse_spec(spec)
 
 
 def _config(org: str | None = None, project: str | None = None) -> VaultConfig:
@@ -197,12 +209,12 @@ def vault_list(org: str | None = None) -> list[str]:
 )
 @anticipated
 def plan(spec: str, org: str | None = None) -> str:
-    project = _parse_spec(spec)
+    project = _parse_project(spec)
     config = _config(org, project.project_name)
     require(config, Capability.READ_INDEX)
     descriptors = load_descriptors(CREDENTIALS_FILE)
     index = _vault(config).index()
-    resolution = resolve(project, descriptors, index)
+    resolution = resolve_project(project, descriptors, index)
     assert config.vault_path is not None
     return render_plan(
         project, resolution, config.vault_path, Path("<spec>"), len(index), index
@@ -284,6 +296,42 @@ def secrets_write(
 
 @server.tool(
     description=(
+        "Put a project that already exists on the dashboard (ADR-036): read its "
+        "GitHub environments and secret names through gh, match them to Loftline's "
+        "descriptors, and write loftline.yml and loftline.credentials.yml in its "
+        "directory. Generates nothing, changes nothing on GitHub, reads no value."
+    )
+)
+@anticipated
+def adopt_project(
+    directory: str,
+    repo: str,
+    name: str | None = None,
+    health: dict[str, str] | None = None,
+) -> str:
+    report = adopt(
+        Path(directory),
+        repo,
+        name=name,
+        health=health,
+        descriptors=load_descriptors(CREDENTIALS_FILE),
+    )
+    a = report.adoption
+    lines = [
+        f"Adopted {a.project_name} from {a.repository}",
+        f"environments: {', '.join(a.environments)}",
+        f"known credentials: {', '.join(report.known) or 'none'}",
+        f"new descriptors: {', '.join(report.new) or 'none'}",
+        f"wrote {report.project_file}",
+    ]
+    if report.credentials_file:
+        lines.append(f"wrote {report.credentials_file}")
+    lines += list(report.notes)
+    return "\n".join(lines)
+
+
+@server.tool(
+    description=(
         "Push a project's spec and live health to the Loftline dashboard and pull "
         "the collaborators the team asked for into its Terraform variables. Needs "
         "loftline_site_token in the vault (run `loftline login`). Writes nothing to "
@@ -303,7 +351,7 @@ def sync(
     descriptor = descriptors["loftline_site_token"]
     assert descriptor.vault_path is not None
     client = SiteClient(_vault(personal).get(descriptor.vault_path), site=DEFAULT_SITE)
-    project = _parse_spec(spec)
+    project = _parse_project(spec)
     chosen = choose(None, org, project.project_name)
     config = chosen.config
     require(config, Capability.DECRYPT)
@@ -315,7 +363,7 @@ def sync(
         repository=repo,
         project_dir=Path(project_dir) if project_dir else None,
         org_slug=org,
-        resolution=resolve(project, descriptors, index),
+        resolution=resolve_project(project, descriptors, index),
         index=index,
         vault_kind=chosen.kind,
     )

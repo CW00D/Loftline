@@ -1628,3 +1628,62 @@ attributed to anyone (the work this record clears the ground for).
 - Points 3, 4 and 7 (public keys, sharing by re-encryption, GitHub
   organisations) are decided here and built after the vault rule and the
   move, which this record's first implementation covers.
+
+---
+
+## ADR-036: Adopting a project that exists already
+
+**Status:** Accepted. Extends ADR-032 and ADR-033.
+
+**Context.** Most of a team's projects predate Loftline. The dashboard's
+worth to that team, collaborators, health, the credential plan and later
+billing, is the same for those projects as for generated ones, and none of
+it depends on the template. Two real candidates exist: BeerReel and UniSoc.
+
+**Decision.**
+
+1. **`loftline adopt <dir> --repo OWNER/NAME` puts an existing project on
+   the dashboard without generating anything.** It writes a `loftline.yml`
+   whose first line is `adopted: true`, holding the project's name,
+   repository, environments, optional health URLs and the names of the
+   credentials it sets. Every command that takes a spec accepts this file;
+   `new`, `realise` and `provision` refuse it, because there is nothing to
+   generate and the hosting is already someone's.
+2. **Discovery reads what the project already declares.** The GitHub
+   environments and the names of their secrets through `gh` (GitHub does
+   not return values, so this is names only by construction), repository
+   secrets, the `sync: false` environment variables of a `render.yaml`,
+   and the keys of a `.env.example`. Nothing is read from a running
+   service or a local `.env`.
+3. **Names are matched to Loftline's descriptors by GitHub secret name.**
+   `SMTP_PASSWORD` is `smtp_password` wherever it appears; if the vault
+   already holds it, the adopted project is that much closer to complete.
+   Names Loftline has no descriptor for get one in a per-project
+   `loftline.credentials.yml`: manual, project-scoped, vendor unknown until
+   someone edits it, vault path `<project>/adopted/<name>`. Commands merge
+   that file with the shared descriptors and refuse a project file that
+   redefines a shared name. This is the per-project descriptors file
+   ADR-032 recorded as the obvious next step.
+4. **Nothing switches over by itself.** While any credential is missing,
+   Loftline observes: health, collaborators, the plan. Once every one is
+   in the vault, `loftline secrets write` takes over the GitHub
+   environments, and from then on the vault is the source. Until an
+   administrator runs it, the project works exactly as before.
+5. **Health is a declared URL, or nothing.** An adopted project has no
+   `/health` contract of ours, so `--health <env>=<url>` names what to
+   check and a 200 means up. Adding a health endpoint to an adopted
+   repository by pull request is possible, since the administrator has
+   the repository, and is left for when a project wants it.
+
+**Consequences.**
+
+- The dashboard's spec check admits the adopted shape (`adopted`,
+  `repository`, `health`, `credentials`); the project page shows it as
+  adopted and never offers `realise`.
+- `sync` and `plan` work from a small protocol (name, environments,
+  summary, URLs) that both the generated spec and the adoption satisfy;
+  the resolver for adoption is a second, simpler function that produces
+  the same partition, so the secret writer and the dashboard plan are
+  unchanged.
+- An adopted project's descriptors are the team's to complete. The
+  acquire text says so rather than pretending to know the vendor.
