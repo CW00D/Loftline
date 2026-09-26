@@ -1687,3 +1687,52 @@ it depends on the template. Two real candidates exist: BeerReel and UniSoc.
   unchanged.
 - An adopted project's descriptors are the team's to complete. The
   acquire text says so rather than pretending to know the vendor.
+
+---
+
+## ADR-037: One set of steps, three ways to run them
+
+**Status:** Accepted. Extends ADR-019 and ADR-032.
+
+**Context.** Everything that changes the world runs on an administrator's
+machine (ADR-032), so every dashboard interaction ends in commands. They
+were shown wherever a feature happened to put them: a card here, a badge
+there, a dialog that closed. The MCP (ADR-019) could run some of the
+commands and not others, so a person using Claude still had to leave the
+conversation for the rest.
+
+**Decision.**
+
+1. **The dashboard computes the steps from state, in one place.** A pure
+   function turns a project view into an ordered list: a vault on this
+   machine, realise, plan, store what is missing, reissue what was copied,
+   take over an adopted project, sync, Terraform. Each step carries its
+   exact commands with the right `--org` or `--project-vault` flag. The
+   project page shows the list with a tick per step and produces one
+   copyable block. No feature writes its own commands into a page again.
+2. **The MCP covers the whole surface.** `realise`, `provision`,
+   `vault_init`, `vault_register` and `vault_copy` join the tools, sharing
+   their code with the CLI through `orchestrate.py` so the terminal and
+   Claude run the same functions. The two things only a person can type,
+   a credential's value and the dashboard token, get `vault_set_prompt`
+   and `login_prompt`: each opens a terminal on the person's machine
+   already running the command, exactly as the site's Store button does.
+   No tool takes or returns a value, as before.
+3. **The brief for Claude is a template, not a generation.** From the same
+   chosen steps, the page produces a markdown brief: prewritten blocks in
+   the steps' order, each naming the MCP tool that does it, the rule about
+   values stated once at the top, and a closing instruction to stop. The
+   same project state gives the same brief to everyone (ADR-001), so no
+   model is called to write it and nothing about a project leaves the
+   browser.
+
+**Consequences.**
+
+- Adding a situation means adding one step to the function and one block
+  to the brief, with a test for each; the tests run with `node --test`
+  and need no browser.
+- Terraform stays a shell command. It is the person's Claude with the
+  person's token that runs it, not the MCP.
+- The brief tells Claude to decline a pasted value and to advise
+  rotation. That is a courtesy to the person, not a control: the control
+  is that no tool accepts one.
