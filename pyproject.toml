@@ -1,6 +1,6 @@
 [project]
 name = "loftline"
-version = "0.4.0"
+dynamic = ["version"]
 description = "A scaffolder and provisioner: credential custody first, templating second."
 readme = "README.md"
 license = "MIT"
@@ -30,6 +30,11 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# One place for the version: the package itself, which the executable also
+# carries. The release tag must match it.
+[tool.hatch.version]
+path = "cli/loftline/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cli/loftline"]

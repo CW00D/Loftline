@@ -279,3 +279,12 @@ def test_doctor_exits_non_zero_when_a_precondition_fails(
     outcome = runner.invoke(app, ["doctor", "--vault", str(vault)])
 
     assert outcome.exit_code != 0
+
+
+def test_version_is_printed_and_matches_the_package() -> None:
+    from loftline import __version__
+
+    outcome = CliRunner().invoke(app, ["--version"])
+
+    assert outcome.exit_code == 0, outcome.output
+    assert outcome.output.strip() == f"loftline {__version__}"

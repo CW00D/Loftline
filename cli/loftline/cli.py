@@ -18,6 +18,7 @@ from typing import Annotated, NoReturn
 
 import typer
 
+from . import __version__
 from .adopt import (
     AdoptError,
     adopt,
@@ -59,6 +60,29 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+
+def _show_version(value: bool) -> None:
+    if value:
+        typer.echo(f"loftline {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            help="Print the version and exit.",
+            callback=_show_version,
+            is_eager=True,
+        ),
+    ] = False,
+) -> None:
+    """Scaffold and provision applications, credentials first."""
+
+
 vault_app = typer.Typer(
     help="Inspect the credential vault, or store a value in it.",
     no_args_is_help=True,
