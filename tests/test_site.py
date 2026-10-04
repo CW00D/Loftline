@@ -333,3 +333,30 @@ def test_the_plan_sent_to_the_dashboard_stores_into_the_projects_vault() -> None
     missing = next(c for c in plan if c["name"] == "render_api_key")
     assert missing["command"] == "loftline vault set render_api_key --org unisoc"
     assert missing["link"] == "loftline://vault/set/render_api_key?org=unisoc"
+
+
+def test_the_plan_can_tell_the_store_command_to_refresh_the_page() -> None:
+    from loftline.models import load_descriptors, load_spec
+    from loftline.resolve import resolve
+    from loftline.site import credentials_plan
+    from loftline.vault import VaultIndex
+
+    repo = Path(__file__).resolve().parents[1]
+    resolution = resolve(
+        load_spec(repo / "examples" / "shop.yml"),
+        load_descriptors(repo / "credentials.yml"),
+        VaultIndex.from_paths([]),
+    )
+
+    plan = credentials_plan(
+        resolution, store_flag=" --org unisoc", link_query="?org=unisoc", refresh="shop"
+    )
+
+    missing = next(c for c in plan if c["name"] == "render_api_key")
+    assert (
+        missing["command"]
+        == "loftline vault set render_api_key --org unisoc --refresh shop"
+    )
+    assert (
+        missing["link"] == "loftline://vault/set/render_api_key?org=unisoc&refresh=shop"
+    )

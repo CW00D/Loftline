@@ -68,6 +68,11 @@ def parse(link: str) -> Action:
             if not SLUG.match(project):
                 raise UrlError(f"{link}: {project!r} is not a project name")
             extra = ("--project-vault", project)
+        refresh = query.get("refresh", [""])[0]
+        if refresh:
+            if not SLUG.match(refresh):
+                raise UrlError(f"{link}: {refresh!r} is not a project name")
+            extra = (*extra, "--refresh", refresh)
         return Action(("loftline", "vault", "set", path[2], *extra), f"Store {path[2]}")
     if path == ["login"]:
         return Action(("loftline", "login"), "Sign in to the Loftline dashboard")

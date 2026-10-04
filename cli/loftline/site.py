@@ -167,10 +167,16 @@ def credentials_plan(
     *,
     store_flag: str = "",
     link_query: str = "",
+    refresh: str | None = None,
 ) -> list[dict[str, Any]]:
     """The plan as the dashboard shows it: each credential's name, state and
     how to get it, with the exact command to store it in the vault this
     project uses. Never a value."""
+    # After storing, the same command re-plans the project and sends the plan
+    # up, so the page catches up without anyone running anything else.
+    if refresh:
+        store_flag = f"{store_flag} --refresh {refresh}"
+        link_query = f"{link_query}{'&' if link_query else '?'}refresh={refresh}"
     plan: list[dict[str, Any]] = []
     for held in resolution.inject:
         entry: dict[str, Any] = {
@@ -183,7 +189,7 @@ def credentials_plan(
             # Copied in from another vault when the project moved; the value
             # should be reissued so this vault holds one nobody else does.
             entry["rotate_from"] = copied_from
-            entry["command"] = f"loftline vault set {held.name}{store_flag} --replace"
+            entry["command"] = f"loftline vault set {held.name} --replace{store_flag}"
             entry["link"] = f"loftline://vault/set/{held.name}{link_query}"
         plan.append(entry)
     for derived in resolution.derive:
@@ -406,7 +412,11 @@ def sync_project(
         else:
             flag, query = "", ""
         status["credentials"] = credentials_plan(
-            resolution, index, store_flag=flag, link_query=query
+            resolution,
+            index,
+            store_flag=flag,
+            link_query=query,
+            refresh=spec.project_name,
         )
     # Which vault this machine actually drew on, so the dashboard can show a
     # mismatch with what was chosen when the project was defined.

@@ -190,6 +190,7 @@ def plan_from_dashboard(
             index,
             store_flag=choice.set_flag,
             link_query=choice.link_query,
+            refresh=name,
         ),
         vault_kind=choice.kind,
         org_slug=org,

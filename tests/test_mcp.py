@@ -345,7 +345,7 @@ async def test_vault_set_prompt_opens_a_terminal_and_returns_no_value(
     assert "paste the value there" in text(result)
     assert "Settings page" in text(login)
     schema = next(t for t in tools if t.name == "vault_set_prompt").input_schema
-    assert list(schema["properties"]) == ["name", "org", "project_vault"]
+    assert list(schema["properties"]) == ["name", "org", "project_vault", "refresh"]
 
 
 async def test_vault_set_prompt_refuses_a_path(monkeypatch: pytest.MonkeyPatch) -> None:

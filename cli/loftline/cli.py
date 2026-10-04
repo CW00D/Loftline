@@ -395,6 +395,16 @@ def vault_set(
     org: OrgOption = None,
     project_vault: ProjectVaultOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
+    refresh: Annotated[
+        str | None,
+        typer.Option(
+            "--refresh",
+            help="Afterwards, re-plan this dashboard project and send the plan up, "
+            "so its page shows the credential as held. The Store buttons pass it.",
+            show_default=False,
+        ),
+    ] = None,
+    site: SiteOption = DEFAULT_SITE,
     replace: Annotated[
         bool,
         typer.Option(
@@ -454,6 +464,19 @@ def vault_set(
         f"{config.vault_path.name} has changed. Commit and push the vault repository "
         "so the value survives this machine."
     )
+    if refresh:
+        try:
+            planned = plan_from_dashboard(
+                refresh, org=org, vault=vault, credentials=credentials, site=site
+            )
+        except LoftlineError as exc:
+            typer.echo(f"Stored, but the dashboard was not refreshed: {exc}", err=True)
+            return
+        left = len(planned.resolution.request)
+        typer.echo(
+            f"{refresh}'s page is up to date: "
+            + (f"{left} still to acquire." if left else "nothing left to acquire.")
+        )
 
 
 def _read_value(name: str, from_stdin: bool) -> str:

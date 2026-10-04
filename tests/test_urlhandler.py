@@ -104,3 +104,23 @@ def test_a_link_can_name_the_organisation_or_project_vault() -> None:
         except UrlError:
             continue
         raise AssertionError(f"accepted {bad}")
+
+
+def test_a_link_can_ask_for_the_dashboard_to_be_refreshed() -> None:
+    from loftline.urlhandler import UrlError, parse
+
+    assert parse("loftline://vault/set/x?org=unisoc&refresh=binder").argv[-4:] == (
+        "--org",
+        "unisoc",
+        "--refresh",
+        "binder",
+    )
+    assert parse("loftline://vault/set/x?refresh=binder").argv[-2:] == (
+        "--refresh",
+        "binder",
+    )
+    try:
+        parse("loftline://vault/set/x?refresh=;rm")
+    except UrlError:
+        return
+    raise AssertionError("accepted a bad project name")
