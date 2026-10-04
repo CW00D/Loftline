@@ -29,7 +29,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .adopt import Adoption, adopt, is_adoption, resolve_project
-from .bootstrap import init_vault
+from .bootstrap import init_vault, personal_recipients
 from .doctor import Capability, VaultConfig, require, run_checks
 from .errors import LoftlineError, SpecError
 from .features import load_default_features
@@ -491,23 +491,30 @@ def provision(
 @server.tool(
     description=(
         "Create an encrypted, empty vault in a new directory and initialise git in "
-        "it. recipients are age public keys (age1...), at least two: this machine's "
-        "and a backup's. With org it is that organisation's vault; with project it "
-        "is that personal project's own; either is registered on this machine by "
-        "name. Without both it is a personal vault, and the person then sets "
-        "LOFTLINE_VAULT to the returned path."
+        "it. With org it is that organisation's vault; with project it is that "
+        "personal project's own; either is registered on this machine by name and "
+        "defaults to ./<name>-vault encrypted to the same two keys as the personal "
+        "vault. recipients (age public keys) override that. A personal vault needs "
+        "recipients given and is normally made by `loftline setup`."
     )
 )
 @anticipated
 def vault_init(
-    directory: str,
-    recipients: list[str],
+    directory: str | None = None,
+    recipients: list[str] | None = None,
     org: str | None = None,
     project: str | None = None,
 ) -> str:
     if org and project:
         raise ToolError("A vault is an organisation's or a project's, not both.")
-    vault = init_vault(Path(directory), recipients)
+    if not recipients:
+        if not (org or project):
+            raise ToolError(
+                "A personal vault needs two recipients; run `loftline setup` instead."
+            )
+        recipients = personal_recipients()
+    target = Path(directory) if directory else Path(f"{org or project}-vault")
+    vault = init_vault(target, recipients)
     lines = [f"Created {vault}, encrypted to {len(recipients)} recipients."]
     if org:
         lines.append(f"Registered as the vault for the organisation {org}.")

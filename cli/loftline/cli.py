@@ -26,7 +26,7 @@ from .adopt import (
     project_descriptors,
     resolve_project,
 )
-from .bootstrap import init_vault, mcp_config
+from .bootstrap import init_vault, mcp_config, personal_recipients
 from .doctor import Capability, Status, VaultConfig, require, run_checks
 from .errors import LoftlineError
 from .generate import generate
@@ -201,14 +201,23 @@ def vault_list(
 
 @vault_app.command("init")
 def vault_init(
-    directory: Annotated[Path, typer.Argument(help="Where to create the vault.")],
+    directory: Annotated[
+        Path | None,
+        typer.Argument(
+            help="Where to create the vault. Default: ./<org or project>-vault, "
+            "or ./loftline-vault for a personal one."
+        ),
+    ] = None,
     recipient: Annotated[
-        list[str],
+        list[str] | None,
         typer.Option(
             "--recipient",
-            help="An age public key (age1...). Pass twice: this machine and a backup.",
+            help="An age public key (age1...). Pass twice: this machine and a backup. "
+            "An organisation's or project's vault defaults to the same two keys "
+            "as your personal vault.",
+            show_default=False,
         ),
-    ],
+    ] = None,
     org: Annotated[
         str | None,
         typer.Option(
@@ -236,7 +245,19 @@ def vault_init(
     """
     if org and project:
         _fail("A vault is an organisation's or a project's, not both.")
+    if directory is None:
+        directory = Path(f"{org or project or 'loftline'}-vault")
     try:
+        if not recipient:
+            if not (org or project):
+                _fail(
+                    "A personal vault needs --recipient twice: this machine's age "
+                    "public key and a backup's. `loftline setup` does this for you."
+                )
+            recipient = personal_recipients()
+            typer.echo(
+                f"Encrypting to the same {len(recipient)} keys as your personal vault."
+            )
         vault = init_vault(directory, recipient)
         if org:
             registry = register_vault("org", org, vault)
@@ -906,9 +927,13 @@ def sync(
 def realise(
     name: Annotated[str, typer.Argument(help="The project's name on the dashboard.")],
     into: Annotated[
-        Path,
-        typer.Option("--into", help="A fresh directory to generate the project into."),
-    ],
+        Path | None,
+        typer.Option(
+            "--into",
+            help="A fresh directory to generate the project into. Default: ./<name>.",
+            show_default=False,
+        ),
+    ] = None,
     org: OrgOption = None,
     terraform: Annotated[
         str | None,
@@ -929,7 +954,7 @@ def realise(
     try:
         report = realise_from_dashboard(
             name,
-            into,
+            into if into is not None else Path(name),
             org=org,
             terraform=terraform,
             vault=vault,

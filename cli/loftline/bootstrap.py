@@ -15,6 +15,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import yaml
+
 from .doctor import KEY_ENV, VAULT_ENV, VaultConfig
 from .errors import VaultError
 
@@ -44,6 +46,40 @@ keys.txt
 *.plain
 *.plain.*
 """
+
+
+def personal_recipients(config: VaultConfig | None = None) -> list[str]:
+    """The age public keys the personal vault is encrypted to.
+
+    A second vault for the same person wants the same keys: this machine's and
+    the backup. Read from the personal vault's `.sops.yaml`, which holds only
+    public keys.
+    """
+    config = config or VaultConfig.from_env()
+    if config.sops_config is None:
+        raise VaultError(
+            "no personal vault is configured (LOFTLINE_VAULT), so there are no "
+            "keys to reuse. Pass --recipient twice instead."
+        )
+    try:
+        document = yaml.safe_load(config.sops_config.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise VaultError(f"{config.sops_config} could not be read: {exc}") from exc
+    rules = document.get("creation_rules", []) if isinstance(document, dict) else []
+    recipients: list[str] = []
+    for rule in rules:
+        raw = rule.get("age") if isinstance(rule, dict) else None
+        if isinstance(raw, str):
+            recipients += [r.strip() for r in raw.split(",") if r.strip()]
+        elif isinstance(raw, list):
+            recipients += [str(r).strip() for r in raw]
+    unique = list(dict.fromkeys(recipients))
+    if len(unique) < 2:
+        raise VaultError(
+            f"{config.sops_config} lists {len(unique)} recipient(s); a vault needs "
+            "two. Pass --recipient twice instead."
+        )
+    return unique
 
 
 def init_vault(

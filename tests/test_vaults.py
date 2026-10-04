@@ -380,3 +380,35 @@ def test_vault_register_records_an_existing_file(
         app, ["vault", "register", str(tmp_path / "nowhere.yml"), "--org", "beta"]
     )
     assert missing.exit_code == 1
+
+
+def test_vault_init_for_an_org_defaults_to_the_personal_keys_and_directory(
+    personal: Path,
+    registry: Path,
+    machine: list[list[str]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    outcome = CliRunner().invoke(app, ["vault", "init", "--org", "acme"])
+
+    assert outcome.exit_code == 0, outcome.output
+    assert "same 2 keys as your personal vault" in outcome.output
+    made = tmp_path / "acme-vault"
+    assert load_registry(registry)["org"]["acme"] == (made / "vault.yml").resolve()
+    assert "age1primary,age1backup" in (made / ".sops.yaml").read_text(encoding="utf-8")
+
+
+def test_a_personal_vault_still_needs_explicit_recipients(
+    personal: Path,
+    machine: list[list[str]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    outcome = CliRunner().invoke(app, ["vault", "init"])
+
+    assert outcome.exit_code == 1
+    assert "--recipient twice" in outcome.output

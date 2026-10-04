@@ -229,21 +229,22 @@ vault is a second encrypted file in its own private repository, and every
 command that touches a project takes `--org <slug>` to use it.
 
 ```
-loftline vault init ../acme-vault --org acme --recipient age1YOUR_KEY --recipient age1YOUR_BACKUP_KEY
+loftline vault init --org acme
 loftline vault set render_api_key --org acme
 loftline plan loftline.yml --org acme
 loftline sync loftline.yml --org acme --project .
 ```
 
-`vault init --org` registers the new vault on this machine in
-`~/.loftline/vaults.yml`, a list of locations and nothing else. Another
+`vault init --org` creates `./acme-vault` encrypted to the same two keys as
+your personal vault (pass `--recipient` twice to choose others) and registers
+it on this machine in `~/.loftline/vaults.yml`, a list of locations and
+nothing else. Push the directory to a private repository. Another
 owner who has cloned the vault repository registers it with
 `loftline vault register <path to its vault.yml> --org acme`.
 
 A personal project can have a vault of its own instead of sharing yours.
 Choose that when defining the project on the dashboard, then create the
-vault with `loftline vault init ../shop-vault --project shop --recipient ...
---recipient ...`. Any command given a spec whose project name is `shop` uses
+vault with `loftline vault init --project shop`. Any command given a spec whose project name is `shop` uses
 it from then on; `vault set` takes `--project-vault shop`. Organisation
 projects always use the organisation's vault.
 
