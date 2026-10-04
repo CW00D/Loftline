@@ -32,6 +32,7 @@ from .generate import generate
 from .models import DescriptorSet, load_descriptors, load_spec
 from .orchestrate import (
     copy_between,
+    plan_from_dashboard,
     provision_from_vault,
     realise_from_dashboard,
     render_provision,
@@ -431,16 +432,56 @@ def _read_value(name: str, from_stdin: bool) -> str:
 
 @app.command()
 def plan(
-    spec: Annotated[Path, typer.Argument(help="Path to a loftline.yml project spec.")],
+    spec: Annotated[
+        Path | None, typer.Argument(help="Path to a loftline.yml project spec.")
+    ] = None,
+    dashboard: Annotated[
+        str | None,
+        typer.Option(
+            "--dashboard",
+            help="Plan a project defined on the dashboard by name instead of a "
+            "file, and send the plan back so its page shows what to get.",
+            show_default=False,
+        ),
+    ] = None,
     vault: VaultOption = None,
     org: OrgOption = None,
     credentials: CredentialsOption = DEFAULT_CREDENTIALS,
+    site: SiteOption = DEFAULT_SITE,
 ) -> None:
-    """Report how every credential this spec needs will be resolved.
+    """Report how every credential this project needs will be resolved.
 
     Reads the encrypted vault for its path index only, so it needs no age key
-    and no `sops` binary. It performs no side effects whatever.
+    and no `sops` binary. With a file it has no side effects at all; with
+    --dashboard it also sends the plan (names and states, never values) to
+    the project's page.
     """
+    if (spec is None) == (dashboard is None):
+        _fail("Give a loftline.yml, or --dashboard <name> for a project defined there.")
+    if dashboard is not None:
+        try:
+            planned = plan_from_dashboard(
+                dashboard, org=org, vault=vault, credentials=credentials, site=site
+            )
+        except LoftlineError as exc:
+            _fail(str(exc))
+        assert planned.choice.config.vault_path is not None
+        typer.echo(
+            render_plan(
+                planned.spec,
+                planned.resolution,
+                planned.choice.config.vault_path,
+                Path(f"<dashboard: {dashboard}>"),
+                len(planned.index),
+                planned.index,
+            )
+        )
+        typer.echo(
+            f"The plan is on {dashboard}'s project page: each missing credential "
+            "with how to get it and a Store button."
+        )
+        return
+    assert spec is not None
     try:
         project = load_project(spec)
         config = choose(vault, org, project.project_name).config

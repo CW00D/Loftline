@@ -24,9 +24,10 @@ from .providers.stripe import StripeClient
 from .provision import ProvisionReport, provision
 from .realise import RealiseReport, spec_from_dashboard
 from .realise import realise as run_realise
-from .resolve import Derive, Inject, resolve
+from .resolve import Derive, Inject, Resolution, resolve
 from .secrets import GitHubSink, write_secrets
-from .site import DEFAULT_SITE, SiteClient, sync_project
+from .site import DEFAULT_SITE, SiteClient, credentials_plan, sync_project
+from .vault import VaultIndex
 from .vault_sops import SopsAgeVault
 from .vaults import (
     Choice,
@@ -141,6 +142,51 @@ def realise_from_dashboard(
         vault_kind=chosen.kind,
     )
     return report
+
+
+@dataclass(frozen=True)
+class DashboardPlan:
+    spec: Spec
+    resolution: Resolution
+    index: VaultIndex
+    choice: Choice
+
+
+def plan_from_dashboard(
+    name: str,
+    *,
+    org: str | None = None,
+    vault: Path | None = None,
+    credentials: Path,
+    site: str = DEFAULT_SITE,
+) -> DashboardPlan:
+    """Resolve a project defined on the dashboard against the vault it will
+    use, and push the credential plan up so the project page can show what to
+    get before anything is realised. Marks nothing as generated."""
+    client = site_client(credentials, site)
+    pulled = client.pull_project(name, org_slug=org)
+    if not pulled.get("spec"):
+        raise OrchestrationError(
+            f"{name} has no spec on the dashboard; define it there first."
+        )
+    if pulled["spec"].get("adopted"):
+        raise OrchestrationError(
+            f"{name} is an adopted project; plan it from its checkout with "
+            "`loftline plan loftline.yml`."
+        )
+    if pulled.get("vault") == "project" and not org:
+        require_project_vault(name)
+    choice = choose(vault, org, name)
+    require(choice.config, Capability.READ_INDEX)
+    assert choice.config.vault_path is not None
+    descriptors = load_descriptors(credentials)
+    spec = spec_from_dashboard(dict(pulled["spec"]))
+    index = SopsAgeVault(choice.config.vault_path).index()
+    resolution = resolve(spec, descriptors, index)
+    client.push_plan(
+        name, credentials_plan(resolution, index), vault_kind=choice.kind, org_slug=org
+    )
+    return DashboardPlan(spec, resolution, index, choice)
 
 
 # --- provision -----------------------------------------------------------------

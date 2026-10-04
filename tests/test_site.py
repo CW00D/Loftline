@@ -288,3 +288,26 @@ def test_sync_sends_the_plan_and_the_summary_when_it_has_them(tmp_path: Path) ->
     status = site.pushed[0]["status"]
     assert status["credentials"] == []
     assert status["summary"].startswith("# shop")
+
+
+def test_push_plan_sends_names_and_states_to_the_plan_endpoint() -> None:
+    transport = FakeTransport(
+        {("PUT", "/sync/projects/binder/plan"): (200, {"ok": True})}
+    )
+    client = SiteClient("llt_x", site="https://api.example.org", transport=transport)
+
+    client.push_plan(
+        "binder",
+        [{"name": "render_api_key", "state": "missing"}],
+        vault_kind="organisation",
+        org_slug="unisoc",
+    )
+
+    method, url, _headers, body = transport.calls[-1]
+    assert (method, url) == ("PUT", "/sync/projects/binder/plan")
+    sent = json.loads(body)
+    assert sent == {
+        "credentials": [{"name": "render_api_key", "state": "missing"}],
+        "vault": "organisation",
+        "org_slug": "unisoc",
+    }

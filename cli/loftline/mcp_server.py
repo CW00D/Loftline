@@ -37,6 +37,7 @@ from .generate import generate
 from .models import Spec, load_descriptors
 from .orchestrate import (
     copy_between,
+    plan_from_dashboard,
     provision_from_vault,
     realise_from_dashboard,
     render_provision,
@@ -231,12 +232,31 @@ def vault_list(org: str | None = None) -> list[str]:
 
 @server.tool(
     description=(
-        "Resolve a spec (YAML text) against the vault: what will be injected, "
-        "generated, acquired (with steps) and created at provisioning. Read-only."
+        "Resolve a spec (YAML text), or a project defined on the dashboard "
+        "(dashboard=<name>, plus org for an organisation's), against the vault "
+        "it will use: what will be injected, generated, acquired (with steps) "
+        "and created at provisioning. With dashboard, the plan is also sent to "
+        "the project's page. Never a value."
     )
 )
 @anticipated
-def plan(spec: str, org: str | None = None) -> str:
+def plan(
+    spec: str | None = None, org: str | None = None, dashboard: str | None = None
+) -> str:
+    if (spec is None) == (dashboard is None):
+        raise ToolError("Give spec (YAML text) or dashboard (a project's name).")
+    if dashboard is not None:
+        planned = plan_from_dashboard(dashboard, org=org, credentials=CREDENTIALS_FILE)
+        assert planned.choice.config.vault_path is not None
+        return render_plan(
+            planned.spec,
+            planned.resolution,
+            planned.choice.config.vault_path,
+            Path(f"<dashboard: {dashboard}>"),
+            len(planned.index),
+            planned.index,
+        )
+    assert spec is not None
     project = _parse_project(spec)
     config = _config(org, project.project_name)
     require(config, Capability.READ_INDEX)

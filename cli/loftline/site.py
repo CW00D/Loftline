@@ -113,6 +113,24 @@ class SiteClient:
         query = f"?org_slug={org_slug}" if org_slug else ""
         return dict(self._call("GET", f"/sync/projects/{name}{query}"))
 
+    def push_plan(
+        self,
+        name: str,
+        plan: list[dict[str, Any]],
+        *,
+        vault_kind: str,
+        org_slug: str | None = None,
+    ) -> dict[str, Any]:
+        """The credential plan for a project that is defined and not yet real.
+        Leaves the project unsynced: nothing has been generated."""
+        return dict(
+            self._call(
+                "PUT",
+                f"/sync/projects/{name}/plan",
+                {"credentials": plan, "vault": vault_kind, "org_slug": org_slug},
+            )
+        )
+
     def mark_applied(
         self, name: str, logins: list[str], *, org_slug: str | None = None
     ) -> None:
