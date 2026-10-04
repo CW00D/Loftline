@@ -36,9 +36,22 @@ def test_the_terminal_runs_exactly_the_command(monkeypatch: pytest.MonkeyPatch) 
     spawned: list[Sequence[str]] = []
     monkeypatch.setattr("loftline.urlhandler.sys.platform", "win32")
 
-    open_terminal(parse("loftline://vault/set/smtp_user"), run=spawned.append)
+    open_terminal(
+        parse("loftline://vault/set/smtp_user?org=unisoc"),
+        run=spawned.append,
+        executable=r"C:\Tools\loftline.exe",
+    )
 
-    assert spawned[0][-1] == "loftline vault set smtp_user"
+    # The full path, each argument separate: the window inherits the
+    # browser's PATH, which may predate the install.
+    assert list(spawned[0][-6:]) == [
+        r"C:\Tools\loftline.exe",
+        "vault",
+        "set",
+        "smtp_user",
+        "--org",
+        "unisoc",
+    ]
     assert spawned[0][:3] == ["cmd", "/c", "start"]
 
 

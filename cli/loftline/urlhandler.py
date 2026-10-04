@@ -78,14 +78,25 @@ def parse(link: str) -> Action:
 
 
 def open_terminal(
-    action: Action, *, run: Callable[[Sequence[str]], None] | None = None
+    action: Action,
+    *,
+    run: Callable[[Sequence[str]], None] | None = None,
+    executable: str | None = None,
 ) -> None:
-    """A new terminal window running the action, left open for the paste."""
-    command = " ".join(shlex.quote(a) for a in action.argv)
+    """A new terminal window running the action, left open for the paste.
+
+    The command names the executable by its full path. The window inherits
+    the browser's environment, and a browser started before Loftline was put
+    on PATH would not find `loftline` by name.
+    """
+    exe = executable or _loftline_executable()
+    argv = (exe, *action.argv[1:])
+    command = " ".join(shlex.quote(a) for a in argv)
     runner = run or _spawn
     if sys.platform == "win32":
         # `start` with a title, then cmd stays open (/k) with the prompt live.
-        runner(["cmd", "/c", "start", action.title, "cmd", "/k", " ".join(action.argv)])
+        # Each argument separate, so a path with spaces is quoted correctly.
+        runner(["cmd", "/c", "start", action.title, "cmd", "/k", *argv])
     elif sys.platform == "darwin":
         script = f'tell application "Terminal" to do script "{command}"'
         runner(["osascript", "-e", script])
@@ -118,6 +129,9 @@ def register(*, executable: str | None = None, home: Path | None = None) -> str:
 
 
 def _loftline_executable() -> str:
+    if getattr(sys, "frozen", False):
+        # The built executable is the CLI; the handler was registered to it.
+        return sys.executable
     found = shutil_which("loftline")
     if found:
         return found
