@@ -162,10 +162,15 @@ class SiteLike(Protocol):
 
 
 def credentials_plan(
-    resolution: Resolution, index: VaultIndex | None = None
+    resolution: Resolution,
+    index: VaultIndex | None = None,
+    *,
+    store_flag: str = "",
+    link_query: str = "",
 ) -> list[dict[str, Any]]:
     """The plan as the dashboard shows it: each credential's name, state and
-    how to get it, with the exact command to store it. Never a value."""
+    how to get it, with the exact command to store it in the vault this
+    project uses. Never a value."""
     plan: list[dict[str, Any]] = []
     for held in resolution.inject:
         entry: dict[str, Any] = {
@@ -178,8 +183,8 @@ def credentials_plan(
             # Copied in from another vault when the project moved; the value
             # should be reissued so this vault holds one nobody else does.
             entry["rotate_from"] = copied_from
-            entry["command"] = f"loftline vault set {held.name} --replace"
-            entry["link"] = f"loftline://vault/set/{held.name}"
+            entry["command"] = f"loftline vault set {held.name}{store_flag} --replace"
+            entry["link"] = f"loftline://vault/set/{held.name}{link_query}"
         plan.append(entry)
     for derived in resolution.derive:
         plan.append(
@@ -197,8 +202,8 @@ def credentials_plan(
                 "vendor": wanted.vendor,
                 "reason": wanted.reason,
                 "acquire": wanted.acquire,
-                "command": f"loftline vault set {wanted.name}",
-                "link": f"loftline://vault/set/{wanted.name}",
+                "command": f"loftline vault set {wanted.name}{store_flag}",
+                "link": f"loftline://vault/set/{wanted.name}{link_query}",
             }
         )
     for deferred in resolution.defer:
@@ -391,7 +396,18 @@ def sync_project(
     for the administrator to apply."""
     status = live_status(spec, health=health)
     if resolution is not None:
-        status["credentials"] = credentials_plan(resolution, index)
+        # How `vault set` reaches this project's vault, so the page's buttons
+        # store into the right one (ADR-035).
+        if org_slug:
+            flag, query = f" --org {org_slug}", f"?org={org_slug}"
+        elif vault_kind == "project":
+            flag = f" --project-vault {spec.project_name}"
+            query = f"?project={spec.project_name}"
+        else:
+            flag, query = "", ""
+        status["credentials"] = credentials_plan(
+            resolution, index, store_flag=flag, link_query=query
+        )
     # Which vault this machine actually drew on, so the dashboard can show a
     # mismatch with what was chosen when the project was defined.
     status["vault"] = vault_kind or ("organisation" if org_slug else "personal")

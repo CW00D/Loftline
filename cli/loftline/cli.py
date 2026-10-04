@@ -519,6 +519,7 @@ def plan(
                 Path(f"<dashboard: {dashboard}>"),
                 len(planned.index),
                 planned.index,
+                planned.choice.set_flag,
             )
         )
         typer.echo(
@@ -529,7 +530,8 @@ def plan(
     assert spec is not None
     try:
         project = load_project(spec)
-        config = choose(vault, org, project.project_name).config
+        chosen = choose(vault, org, project.project_name)
+        config = chosen.config
         require(config, Capability.READ_INDEX)
         assert config.vault_path is not None
         descriptors = _descriptors(credentials, spec.parent)
@@ -539,7 +541,15 @@ def plan(
         _fail(str(exc))
 
     typer.echo(
-        render_plan(project, resolution, config.vault_path, spec, len(index), index)
+        render_plan(
+            project,
+            resolution,
+            config.vault_path,
+            spec,
+            len(index),
+            index,
+            chosen.set_flag,
+        )
     )
 
 

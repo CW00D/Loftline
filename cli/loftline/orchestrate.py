@@ -184,7 +184,15 @@ def plan_from_dashboard(
     index = SopsAgeVault(choice.config.vault_path).index()
     resolution = resolve(spec, descriptors, index)
     client.push_plan(
-        name, credentials_plan(resolution, index), vault_kind=choice.kind, org_slug=org
+        name,
+        credentials_plan(
+            resolution,
+            index,
+            store_flag=choice.set_flag,
+            link_query=choice.link_query,
+        ),
+        vault_kind=choice.kind,
+        org_slug=org,
     )
     return DashboardPlan(spec, resolution, index, choice)
 

@@ -63,3 +63,31 @@ def test_macos_says_it_cannot_yet(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(UrlError, match="Copy button"):
         register(executable="/usr/local/bin/loftline")
+
+
+def test_a_link_can_name_the_organisation_or_project_vault() -> None:
+    from loftline.urlhandler import UrlError, parse
+
+    assert parse("loftline://vault/set/render_api_key?org=unisoc").argv == (
+        "loftline",
+        "vault",
+        "set",
+        "render_api_key",
+        "--org",
+        "unisoc",
+    )
+    assert parse("loftline://vault/set/render_api_key?project=shop").argv[-2:] == (
+        "--project-vault",
+        "shop",
+    )
+    assert parse("loftline://vault/set/render_api_key").argv[-1] == "render_api_key"
+    for bad in (
+        "loftline://vault/set/x?org=unisoc&project=shop",
+        "loftline://vault/set/x?org=Bad Slug",
+        "loftline://vault/set/x?org=../etc",
+    ):
+        try:
+            parse(bad)
+        except UrlError:
+            continue
+        raise AssertionError(f"accepted {bad}")

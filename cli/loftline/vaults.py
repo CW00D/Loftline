@@ -148,6 +148,24 @@ class Choice:
         return "your personal vault"
 
     @property
+    def set_flag(self) -> str:
+        """What `loftline vault set` needs after the name to reach this vault."""
+        if self.kind == "organisation":
+            return f" --org {self.name}"
+        if self.kind == "project":
+            return f" --project-vault {self.name}"
+        return ""
+
+    @property
+    def link_query(self) -> str:
+        """The same, for a loftline://vault/set/<name> link."""
+        if self.kind == "organisation":
+            return f"?org={self.name}"
+        if self.kind == "project":
+            return f"?project={self.name}"
+        return ""
+
+    @property
     def mark(self) -> str:
         """How a copy from this vault is labelled in the receiving one."""
         if self.kind == "organisation":

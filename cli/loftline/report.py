@@ -24,12 +24,13 @@ def render_plan(
     spec_path: Path,
     path_count: int,
     index: VaultIndex | None = None,
+    store_flag: str = "",
 ) -> str:
     lines: list[str] = ["", f"Loftline plan for {spec.project_name}", ""]
     lines += _summary(spec, vault_path, spec_path, path_count, resolution)
     lines += _inject(resolution, index)
     lines += _derive(resolution)
-    lines += _request(resolution)
+    lines += _request(resolution, store_flag)
     lines += _defer(resolution)
     lines += [
         "Nothing has been created, written or fetched. `plan` has no side effects.",
@@ -113,7 +114,7 @@ def _derive(resolution: Resolution) -> list[str]:
     return lines
 
 
-def _request(resolution: Resolution) -> list[str]:
+def _request(resolution: Resolution, store_flag: str = "") -> list[str]:
     lines = _heading(
         "Acquire",
         len(resolution.request),
@@ -124,7 +125,9 @@ def _request(resolution: Resolution) -> list[str]:
         return lines
     for entry in resolution.request:
         lines.append(f"{INDENT}{entry.name}  ({entry.vendor}, {entry.reason})")
-        lines.append(f"{INDENT}{INDENT}store with  loftline vault set {entry.name}")
+        lines.append(
+            f"{INDENT}{INDENT}store with  loftline vault set {entry.name}{store_flag}"
+        )
         lines.append(f"{INDENT}{INDENT}vault path  {entry.vault_path}")
         if entry.acquire:
             lines.append(f"{INDENT}{INDENT}how to acquire:")

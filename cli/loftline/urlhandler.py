@@ -21,12 +21,13 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .errors import LoftlineError
 
 SCHEME = "loftline"
 NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,38}$")
 
 
 class UrlError(LoftlineError):
@@ -51,7 +52,23 @@ def parse(link: str) -> Action:
         and path[1] == "set"
         and NAME.match(path[2])
     ):
-        return Action(("loftline", "vault", "set", path[2]), f"Store {path[2]}")
+        # ?org=<slug> or ?project=<name> says which vault (ADR-035). Both are
+        # names the dashboard already shows; neither is a value.
+        query = parse_qs(parts.query)
+        extra: tuple[str, ...] = ()
+        org = query.get("org", [""])[0]
+        project = query.get("project", [""])[0]
+        if org and project:
+            raise UrlError(f"{link} names both an organisation and a project")
+        if org:
+            if not SLUG.match(org):
+                raise UrlError(f"{link}: {org!r} is not an organisation slug")
+            extra = ("--org", org)
+        elif project:
+            if not SLUG.match(project):
+                raise UrlError(f"{link}: {project!r} is not a project name")
+            extra = ("--project-vault", project)
+        return Action(("loftline", "vault", "set", path[2], *extra), f"Store {path[2]}")
     if path == ["login"]:
         return Action(("loftline", "login"), "Sign in to the Loftline dashboard")
     raise UrlError(

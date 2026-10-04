@@ -591,16 +591,23 @@ def vault_copy(
     description=(
         "Open a terminal on the person's machine already running `loftline vault "
         "set <name>`, so they paste the credential's value there and it goes into "
-        "the vault without passing through this conversation. The argument is the "
-        "credential's name (render_api_key), never a path or a value. Tell the "
-        "person the terminal has opened and what to paste."
+        "the vault without passing through this conversation. name is the "
+        "credential's name (render_api_key), never a path or a value; org (slug) "
+        "or project_vault (name) says which vault, as the project's commands do. "
+        "Tell the person the terminal has opened and what to paste."
     )
 )
 @anticipated
-def vault_set_prompt(name: str) -> str:
-    open_terminal(parse(f"loftline://vault/set/{name}"))
+def vault_set_prompt(
+    name: str, org: str | None = None, project_vault: str | None = None
+) -> str:
+    query = (
+        f"?org={org}" if org else (f"?project={project_vault}" if project_vault else "")
+    )
+    action = parse(f"loftline://vault/set/{name}{query}")
+    open_terminal(action)
     return (
-        f"A terminal is open running `loftline vault set {name}`. Ask the person to "
+        f"A terminal is open running `{' '.join(action.argv)}`. Ask the person to "
         "paste the value there; nothing about it comes back here."
     )
 
