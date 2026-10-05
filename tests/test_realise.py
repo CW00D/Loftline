@@ -140,3 +140,15 @@ def test_a_non_empty_directory_is_refused(tmp_path: Path) -> None:
             runner=FakeRunner(),
             terraform="terraform",
         )
+
+
+def test_the_follow_up_command_reaches_the_same_vault(tmp_path: Path) -> None:
+    """Found on the first live run: realise for an organisation's project told
+    the user to provision without --org, which would have read the wrong vault."""
+    import inspect
+
+    from loftline import realise as module
+
+    source = inspect.getsource(module.realise)
+    assert "command_flags" in source
+    assert "{command_flags}`." in source

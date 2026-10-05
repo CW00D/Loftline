@@ -107,6 +107,7 @@ def realise(
     runner: Runner = subprocess_runner,
     terraform: str | None = None,
     owner: str | None = None,
+    command_flags: str = "",
 ) -> RealiseReport:
     """Run the pipeline for a spec into `directory`. Idempotent where the
     tools are: an existing directory is refused, an existing repository is
@@ -206,6 +207,7 @@ def realise(
         next_step=(
             "Connect the repository's render.yaml as a Blueprint in the Render "
             f"dashboard (New, Blueprint, {repository}), then run "
-            f"`loftline provision {directory / 'loftline.yml'} --repo {repository}`."
+            f"`loftline provision {directory / 'loftline.yml'} --repo {repository}"
+            f"{command_flags}`."
         ),
     )

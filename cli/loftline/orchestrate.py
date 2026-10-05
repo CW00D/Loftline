@@ -130,6 +130,8 @@ def realise_from_dashboard(
         generate=do_generate,
         write_secrets=do_secrets,
         terraform=terraform,
+        # The follow-up command must reach the same vault this one did.
+        command_flags=f" --org {org}" if org else "",
     )
     sync_project(
         project_spec,
